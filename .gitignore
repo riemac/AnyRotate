@@ -9,10 +9,10 @@
 **/.thumbs
 
 # No USD files allowed in the repo
-**/*.usd
-**/*.usda
-**/*.usdc
-**/*.usdz
+# **/*.usd
+# **/*.usda
+# **/*.usdc
+# **/*.usdz
 
 # Python
 .DS_Store
@@ -69,3 +69,6 @@ tests/
 
 # Docker history
 .isaac-lab-docker-history
+
+# LEAP_Hand_Sim
+/LEAP_Hand_Sim/
