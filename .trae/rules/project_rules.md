@@ -5,7 +5,7 @@ description: IsaacLab开发规则
 
 ## IsaacLab开发调试规则
 
-当用户进行询问或你在开发和调试过程中遇到以下情况时，你应按照以下规则处理：
+当在开发和调试过程中遇到以下情况时，你应按照以下规则处理：
 
 ### 1. 工作区结构说明
 
@@ -18,17 +18,18 @@ description: IsaacLab开发规则
 
 ### 2. IsaacLab API或概念等不清楚时的处理流程
 
-1. **优先使用context7工具查询**
-   - 当遇到不限IsaacLab,Isaacsim,usd等相关的API、概念不清楚时，应首先使用`mcp_context7_resolve-library-id`和`mcp_context7_get-library-docs`工具查询官方文档
-   - 如usda文件的层级结构或术语不了解，则可在context7中搜索usd相关信息；IsaacLab环境配置API不明确，可在context7中搜索isaaclab相关信息。其他同理
-   - 通过这种方式可以获取最准确、最新的API信息，避免产生幻觉或使用不存在的API
-
-2. **查阅IsaacLab源码和文档**
-   - 当context7查询结果中没有相关信息时，可在IsaacLab项目目录中查找相关文档和示例代码
+1. **优先查阅IsaacLab源码和文档**
+   - 在IsaacLab项目目录中查找相关文档和示例代码
    - 可在以下路径查找相关文档：
      - `docs/`: 官方文档
      - `source/`: 源代码目录，包含详细的代码注释
      - `examples/`: 示例代码
+     - `scripts/tutorials`: 官方教程示例
+
+2. **使用context7工具查询**
+   - 使用`mcp_context7_resolve-library-id`和`mcp_context7_get-library-docs`工具查询官方文档
+   - 如usda文件的层级结构或术语不了解，则可在context7中搜索usd相关信息；IsaacLab环境配置API不明确，可在context7中搜索isaaclab相关信息。其他同理
+   - 通过这种方式可以获取最准确、最新的API信息，避免产生幻觉或使用不存在的API
 
 3. **其次使用网络搜索**
    - 如果context7工具未能解决疑问，可以使用网络搜索工具进一步查找相关信息

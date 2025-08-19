@@ -7,8 +7,8 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (-0.5220952693483991, 0.12999142353431076, 0.2963320617586902)
-                double3 target = (0.19416083248877092, -0.12496313889129312, -0.08972909636609344)
+                double3 position = (0.0468278516518101, -0.4315209972863643, 0.4671286564023498)
+                double3 target = (-0.10945574057519192, 0.3747889219669083, -0.23841718924920596)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -21,6 +21,7 @@
             string boundCamera = "/OmniverseKit_Persp"
         }
         dictionary omni_layer = {
+            string authoring_layer = "./leaphand_object_scene.usda"
             dictionary locked = {
             }
             dictionary muteness = {
@@ -59,7 +60,7 @@ def Xform "World"
         prepend references = @../../../../../LEAP_Hand_Sim/assets/leap_hand/robot/robot.usd@
     )
     {
-        quatd xformOp:orient = (1, 0, 0, 0)
+        quatd xformOp:orient = (6.123233995736766e-17, 1, 0, 0)
         double3 xformOp:scale = (1, 1, 1)
         double3 xformOp:translate = (0, 0, 0.09496090251819082)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
@@ -238,7 +239,7 @@ def Xform "World"
     {
         quatd xformOp:orient = (1, 0, 0, 0)
         double3 xformOp:scale = (1, 1, 1)
-        double3 xformOp:translate = (-0.05231851204145326, -0.02809085328999379, 0.14797322876597277)
+        double3 xformOp:translate = (-0.04268203836790404, 0.042451550089593365, 0.18263458488516815)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
         over "object"

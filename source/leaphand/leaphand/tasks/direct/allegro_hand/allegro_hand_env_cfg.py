@@ -13,7 +13,7 @@ from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
-from isaaclab.utils import configclass
+from isaaclab.utils import configclass # 装饰器，要求配置类成员有类型注释？
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 

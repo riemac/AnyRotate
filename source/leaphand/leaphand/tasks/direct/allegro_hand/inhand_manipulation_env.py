@@ -24,10 +24,10 @@ if TYPE_CHECKING:
 
 
 class InHandManipulationEnv(DirectRLEnv):
-    cfg: AllegroHandEnvCfg | ShadowHandEnvCfg
+    cfg: AllegroHandEnvCfg | ShadowHandEnvCfg # 类属性类型提示，用于类型检查，在整个类中都有效。下面还可以加其他属性类型提示
 
     def __init__(self, cfg: AllegroHandEnvCfg | ShadowHandEnvCfg, render_mode: str | None = None, **kwargs):
-        super().__init__(cfg, render_mode, **kwargs)
+        super().__init__(cfg, render_mode, **kwargs) # 初始父类里会调用_setup_scene()方法
 
         self.num_hand_dofs = self.hand.num_joints
 
