@@ -86,15 +86,15 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
     ]
 
     # 目标物体配置
-    goal_object_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(
-        prim_path="/Visuals/goal_marker",  # 目标物体路径
-        markers={
-            "goal": sim_utils.UsdFileCfg(  # 目标物体使用立方体模型
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
-                scale=(1.0, 1.0, 1.0),  # 目标物体缩放比例
-            )
-        },
-    )
+    # goal_object_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(
+    #     prim_path="/Visuals/goal_marker",  # 目标物体路径
+    #     markers={
+    #         "goal": sim_utils.UsdFileCfg(  # 目标物体使用立方体模型
+    #             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+    #             scale=(1.0, 1.0, 1.0),  # 目标物体缩放比例
+    #         )
+    #     },
+    # )
     
     # 场景配置
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
@@ -103,20 +103,12 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
         replicate_physics=True  # 是否复制物理引擎
     )
     
-    # 物体配置 - 创建一个简单的立方体物体
+    # 物体配置 
     object_cfg: RigidObjectCfg = RigidObjectCfg(
         prim_path="/World/envs/env_.*/object",
-        spawn=sim_utils.CuboidCfg(
-            size=(0.04, 0.04, 0.04),  # 4cm立方体
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(max_depenetration_velocity=1.0),
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                static_friction=1.0, dynamic_friction=1.0, restitution=0.0
-            ),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-        ),
+        spawn=None,
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.15),  # 手掌上方15cm
+            pos=(-0.0427, 0.0425, 0.183),  # 手掌上方18.3cm
             rot=(1.0, 0.0, 0.0, 0.0),  # 初始旋转
             lin_vel=(0.0, 0.0, 0.0),  # 初始线速度
             ang_vel=(0.0, 0.0, 0.0),  # 初始角速度
