@@ -6,7 +6,7 @@
 """LeapHand手内旋转任务环境配置类"""
 
 # 导入LeapHand机器人模型配置
-from leaphand.robots.leaphand import LEAPHAND_CONFIG
+from leaphand.robots.leaphand import LEAPHAND_CONFIG, usd_path
 
 # 导入相关模块
 import isaaclab.sim as sim_utils
@@ -85,16 +85,17 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
         "thumb_fingertip", # 拇指指尖
     ]
 
-    # 目标物体配置
-    # goal_object_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(
-    #     prim_path="/Visuals/goal_marker",  # 目标物体路径
-    #     markers={
-    #         "goal": sim_utils.UsdFileCfg(  # 目标物体使用立方体模型
-    #             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
-    #             scale=(1.0, 1.0, 1.0),  # 目标物体缩放比例
-    #         )
-    #     },
-    # )
+    # 目标物体配置 - 使用与实际物体相同的模型，便于可视化目标旋转
+    goal_object_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(
+        prim_path="/Visuals/goal_marker",  # 目标物体路径
+        markers={
+            "goal": sim_utils.UsdFileCfg( 
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+                # usd_path=usd_path,  # 与object_cfg使用相同的USD文件
+                scale=(1.0, 1.0, 1.0),  # 目标物体缩放比例
+            )
+        },
+    )
     
     # 场景配置
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
@@ -103,12 +104,19 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
         replicate_physics=True  # 是否复制物理引擎
     )
     
-    # 物体配置 
+    # 物体配置 - 创建简单的立方体物体，参考Isaac Lab官方示例
     object_cfg: RigidObjectCfg = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/object",
-        spawn=None,
+        prim_path="/World/envs/env_.*/cube", # 物体路径 - 改为cube避免与USDA中的object冲突
+        spawn=sim_utils.CuboidCfg(
+            size=(0.04, 0.04, 0.04),  # 4cm立方体
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(),  # 使用默认刚体属性
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
+            collision_props=sim_utils.CollisionPropertiesCfg(),  # 重要：添加碰撞属性
+            physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=1.0),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), metallic=0.2),
+        ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(-0.0427, 0.0425, 0.183),  # 手掌上方18.3cm
+            pos=(-0.0427, 0.0425, 0.183),  # 基于USDA文件中的位置
             rot=(1.0, 0.0, 0.0, 0.0),  # 初始旋转
             lin_vel=(0.0, 0.0, 0.0),  # 初始线速度
             ang_vel=(0.0, 0.0, 0.0),  # 初始角速度

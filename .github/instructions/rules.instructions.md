@@ -1,7 +1,10 @@
 ---
-type: "agent_requested"
-description: "询问isaacsim/isaaclab等有关问题或基于isaacsim/isaaclab进行开发时"
+applyTo: '**'
 ---
+## 触发条件
+- 询问isaacsim/isaaclab等有关问题或基于isaacsim/isaaclab进行开发时
+- 不是所有对话都要基于该规则，根据情况自行判断
+
 ## 核心开发与协作原则
 
 ### 1. 🤖 主动反馈优先 (Proactive Feedback First) - [核心新增]

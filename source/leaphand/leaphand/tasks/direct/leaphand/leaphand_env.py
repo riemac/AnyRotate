@@ -45,7 +45,7 @@ class LeaphandEnv(DirectRLEnv):
 
         # 从场景中获取 hand 和 object 的引用
         self.hand = self.scene.articulations["hand"]
-        self.object = self.scene.rigid_objects["object"]
+        self.object = self.scene.rigid_objects["object"]  # 注意：配置中使用cube，但这里仍用object作为键名
 
         # 手部关节数量
         self.num_hand_dofs = self.hand.num_joints
@@ -162,6 +162,9 @@ class LeaphandEnv(DirectRLEnv):
         )
 
     def _get_observations(self) -> dict:
+        # 首先计算中间值，确保object_pos等属性可用
+        self._compute_intermediate_values()
+
         if self.cfg.asymmetric_obs:
             self.fingertip_force_sensors = self.hand.root_physx_view.get_link_incoming_joint_force()[
                 :, self.finger_bodies
