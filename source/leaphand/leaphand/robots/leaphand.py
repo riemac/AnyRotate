@@ -8,14 +8,15 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 # 使用本地LEAP Hand模型路径
 from pathlib import Path
 
-usd_path = str(Path(__file__).parent.parent.parent / "assets" / "leaphand_object_scene.usda")  # 本地LEAP Hand模型路径
+# 使用单独的手部模型文件，而不是包含物体的完整场景
+hand_usd_path = str(Path(__file__).parent.parent.parent.parent.parent / "LEAP_Hand_Sim" / "assets" / "leap_hand" / "robot" / "robot.usd")  # 单独的手部USD文件
 
 
 # LEAP Hand机器人的配置
 LEAPHAND_CONFIG = ArticulationCfg(
     # USD资产配置
     spawn=sim_utils.UsdFileCfg(
-        usd_path=usd_path,  # USD文件路径
+        usd_path=hand_usd_path,  # USD文件路径 - 使用单独的手部文件
         activate_contact_sensors=False,  # 是否激活接触传感器
         rigid_props=sim_utils.RigidBodyPropertiesCfg(  # 刚体属性配置
             disable_gravity=True,  # 是否禁用重力
@@ -37,15 +38,24 @@ LEAPHAND_CONFIG = ArticulationCfg(
     ),
 
     # 机器人初始状态配置
+    # init_state=ArticulationCfg.InitialStateCfg( # 这个即使不配置也会默认设为0
+    #     pos=(0.0, 0.0, 0.095),  # 初始位置(x,y,z)
+    #     rot=(0.0, 1, 0.0, 0.0),  # 初始旋转四元数(w, x, y, z)
+    #     lin_vel=(0.0, 0.0, 0.0),  # 初始线速度(x,y,z)
+    #     ang_vel=(0.0, 0.0, 0.0),  # 初始角速度(x,y,z)
+    #     joint_pos={".*": 0.0},  # 所有关节初始角度设为0
+    #     joint_vel={".*": 0.0},  # 所有关节初始速度设为0
+    # ),
+    
     init_state=ArticulationCfg.InitialStateCfg( # 这个即使不配置也会默认设为0
-        pos=(0.0, 0.0, 0.095),  # 初始位置(x,y,z)
-        rot=(0.0, 1, 0.0, 0.0),  # 初始旋转四元数(w, x, y, z)
+        pos=(0.0, 0.0, 0.0),  # 初始位置(x,y,z)
+        rot=(1, 0, 0, 0),  # 初始旋转四元数(w, x, y, z)
         lin_vel=(0.0, 0.0, 0.0),  # 初始线速度(x,y,z)
         ang_vel=(0.0, 0.0, 0.0),  # 初始角速度(x,y,z)
         joint_pos={".*": 0.0},  # 所有关节初始角度设为0
         joint_vel={".*": 0.0},  # 所有关节初始速度设为0
     ),
-    
+
     # 关节驱动器配置
     actuators={
         "fingers": ImplicitActuatorCfg(  # 手指关节驱动器

@@ -6,7 +6,8 @@
 """LeapHand手内旋转任务环境配置类"""
 
 # 导入LeapHand机器人模型配置
-from leaphand.robots.leaphand import LEAPHAND_CONFIG, usd_path
+from leaphand.robots.leaphand import LEAPHAND_CONFIG
+from pathlib import Path
 
 # 导入相关模块
 import isaaclab.sim as sim_utils
@@ -47,8 +48,8 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
         ),
     )
     
-    # 机器人配置 - 使用包含物体的完整场景，保持USDA文件中的初始状态
-    robot_cfg = LEAPHAND_CONFIG.replace(prim_path="/World/envs/env_.*/onshape")  # 加载LeapHand机器人模型
+    # 机器人配置 - 使用单独的手部USD文件
+    robot_cfg = LEAPHAND_CONFIG.replace(prim_path="/World/envs/env_.*/hand")  # 加载LeapHand机器人模型，设置专门的prim路径
 
     # 可控关节名称列表
     actuated_joint_names = [
@@ -89,10 +90,9 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
     goal_object_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(
         prim_path="/Visuals/goal_marker",  # 目标物体路径
         markers={
-            "goal": sim_utils.UsdFileCfg( 
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
-                # usd_path=usd_path,  # 与object_cfg使用相同的USD文件
-                scale=(1.0, 1.0, 1.0),  # 目标物体缩放比例
+            "goal": sim_utils.CuboidCfg( 
+                size=(0.04, 0.04, 0.04),  # 与实际物体相同的大小
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),  # 绿色目标
             )
         },
     )
@@ -106,7 +106,7 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
     
     # 物体配置 - 创建简单的立方体物体，参考Isaac Lab官方示例
     object_cfg: RigidObjectCfg = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/cube", # 物体路径 - 改为cube避免与USDA中的object冲突
+        prim_path="/World/envs/env_.*/object", # 物体路径 - 使用单独的object路径
         spawn=sim_utils.CuboidCfg(
             size=(0.04, 0.04, 0.04),  # 4cm立方体
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),  # 使用默认刚体属性
@@ -116,7 +116,7 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), metallic=0.2),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(-0.0427, 0.0425, 0.183),  # 基于USDA文件中的位置
+            pos=(-0.043, 0.042, 0.183),  # 基于USDA文件中的位置，相对于手部位置
             rot=(1.0, 0.0, 0.0, 0.0),  # 初始旋转
             lin_vel=(0.0, 0.0, 0.0),  # 初始线速度
             ang_vel=(0.0, 0.0, 0.0),  # 初始角速度

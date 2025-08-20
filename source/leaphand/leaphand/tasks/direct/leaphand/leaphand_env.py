@@ -110,7 +110,7 @@ class LeaphandEnv(DirectRLEnv):
     def _setup_scene(self):
         """设置仿真场景，包括地面、机器人和物体"""
         # Add ground plane
-        spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
+        spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg()) # 测试不生成地板
 
         # Add the hand articulation - 使用USDA场景中的机器人
         self.scene.articulations["hand"] = Articulation(self.cfg.robot_cfg)
