@@ -133,8 +133,9 @@ class LeaphandEnv(DirectRLEnv):
             self.object = self.scene.rigid_objects["object"]
 
         # 获取物体的默认位置
+        # default_root_state的形状是[num_envs, 13]，所以我们直接取前3列作为位置
         default_object_pos = self.object.data.default_root_state[:, 0:3].clone()
-        self.target_object_pos = default_object_pos.repeat(self.num_envs, 1)
+        self.target_object_pos = default_object_pos
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
