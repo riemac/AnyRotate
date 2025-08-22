@@ -12,7 +12,7 @@ import torch
 from collections.abc import Sequence
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation
+from isaaclab.assets import Articulation, RigidObject
 from isaaclab.envs import DirectRLEnv
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
@@ -45,7 +45,7 @@ class LeaphandEnv(DirectRLEnv):
 
         # 从场景中获取 hand 和 object 的引用
         self.hand = self.scene.articulations["hand"]
-        self.object = self.scene.rigid_objects["object"]  # 注意：配置中使用cube，但这里仍用object作为键名
+        self.object = self.scene.rigid_objects["object"]
 
         # 手部关节数量
         self.num_hand_dofs = self.hand.num_joints
@@ -107,9 +107,6 @@ class LeaphandEnv(DirectRLEnv):
         # 在场景设置完成后初始化目标位置
         self._initialize_target_positions()
 
-        # 验证物体位置是否正确
-        self._verify_object_positions()
-
     def _setup_scene(self):
         """设置仿真场景，包括地面、机器人和物体"""
         # Add ground plane
@@ -124,7 +121,6 @@ class LeaphandEnv(DirectRLEnv):
         self.scene.articulations["hand"] = Articulation(self.cfg.robot_cfg)
 
         # Add the object as a rigid body - 创建物体
-        from isaaclab.assets import RigidObject
         self.scene.rigid_objects["object"] = RigidObject(self.cfg.object_cfg)
 
         # Clone and replicate environments
@@ -135,41 +131,13 @@ class LeaphandEnv(DirectRLEnv):
         light_cfg.func("/World/Light", light_cfg)
 
     def _initialize_target_positions(self):
-        """初始化目标位置为物体的默认位置"""
-        # 在场景设置完成后，获取物体引用
-        if not hasattr(self, 'object'):
-            self.object = self.scene.rigid_objects["object"]
-
-        # 获取物体的默认位置
-        # default_root_state的形状是[num_envs, 13]，所以我们直接取前3列作为位置
-        default_object_pos = self.object.data.default_root_state[:, 0:3].clone()
-        # 添加环境原点偏移
-        default_object_pos += self.scene.env_origins
-        self.target_object_pos = default_object_pos
-
-        # 初始化时重置物体位置，确保位置正确
-        self._reset_object_to_default_position()
-
-    def _verify_object_positions(self):
-        """验证物体位置是否与配置一致"""
-        if hasattr(self, 'object') and self.object is not None:
-            # 获取当前物体位置
-            current_pos = self.object.data.root_pos_w
-            # 获取期望位置（默认位置 + 环境原点）
-            expected_pos = self.object.data.default_root_state[:, :3] + self.scene.env_origins
-
-            # 计算位置差异
-            pos_diff = torch.norm(current_pos - expected_pos, dim=-1)
-            max_diff = pos_diff.max().item()
-
-            print(f"物体位置验证:")
-            print(f"  当前位置 (第一个环境): {current_pos[0]}")
-            print(f"  期望位置 (第一个环境): {expected_pos[0]}")
-            print(f"  最大位置差异: {max_diff:.3f}m")
-
-            if max_diff > 0.01:  # 1cm容差
-                print(f"  警告: 检测到位置不匹配! 差异超过1cm")
-                print(f"  建议检查object_cfg.init_state.pos配置")
+        """初始化目标位置为手部附近的位置"""
+        # 设置目标位置为手部附近，而不是物体的初始位置
+        # 这样物体可以从高处下落到手部附近
+        hand_base_pos = self.hand.data.root_pos_w.clone()
+        # 设置目标位置在手部上方约10cm处
+        target_offset = torch.tensor([0.0, 0.0, 0.1], device=self.device).repeat(self.num_envs, 1)
+        self.target_object_pos = hand_base_pos + target_offset
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
@@ -210,7 +178,7 @@ class LeaphandEnv(DirectRLEnv):
         elif self.cfg.obs_type == "full":
             obs = self.compute_full_observations()
         else:
-            print("Unknown observations type!")
+            raise ValueError(f"Unknown observations type: {self.cfg.obs_type}")
 
         if self.cfg.asymmetric_obs:
             states = self.compute_full_state()
@@ -267,7 +235,7 @@ class LeaphandEnv(DirectRLEnv):
         """检查环境完成条件"""
         self._compute_intermediate_values()
 
-        # 检查物体是否掉落 (距离目标位置太远)
+        # 检查物体是否掉落 - 基于距离目标位置的检测
         object_dist = torch.norm(self.object_pos - self.target_object_pos, p=2, dim=-1)
         out_of_reach = object_dist >= self.cfg.fall_dist
 
@@ -294,64 +262,44 @@ class LeaphandEnv(DirectRLEnv):
         return out_of_reach, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
-        """重置指定环境，专门为手内旋转任务设计"""
+        """重置指定环境，参考官方InHandManipulationEnv实现"""
         if env_ids is None:
             env_ids = self.hand._ALL_INDICES
         super()._reset_idx(env_ids)
 
-        # Reset hand to default pose from USDA file (with small noise)
-        hand_joint_pos = self.hand.data.default_joint_pos[env_ids].clone()
-
-        # 添加小量噪声到默认关节位置
-        hand_joint_pos += sample_uniform(
-            -self.cfg.reset_dof_pos_noise,
-            self.cfg.reset_dof_pos_noise,
-            hand_joint_pos.shape,
-            device=self.device,
-        )
-
-        hand_joint_vel = self.hand.data.default_joint_vel[env_ids]
-        hand_joint_vel += sample_uniform(
-            -self.cfg.reset_dof_vel_noise,
-            self.cfg.reset_dof_vel_noise,
-            hand_joint_vel.shape,
-            device=self.device,
-        )
-
-        # Reset object to default state - 修复位置不匹配问题
-        object_state = self.object.data.default_root_state[env_ids].clone()
-
-        # 检查并修复位置不匹配问题
-        # 确保物体位置相对于环境原点正确设置
-        object_state[:, :3] += self.scene.env_origins[env_ids]
-
-        # 在默认位置基础上添加小量噪声
-        object_state[:, :3] += sample_uniform(
-            -self.cfg.reset_position_noise,
-            self.cfg.reset_position_noise,
-            (len(env_ids), 3),
-            device=self.device,
+        # 重置物体状态
+        object_default_state = self.object.data.default_root_state.clone()[env_ids]
+        pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), 3), device=self.device)
+        # 设置全局物体位置（局部位置 + 位置噪声 + 环境原点）
+        object_default_state[:, 0:3] = (
+            object_default_state[:, 0:3] + self.cfg.reset_position_noise * pos_noise + self.scene.env_origins[env_ids]
         )
 
         # 保存初始旋转（用于生成目标旋转）
-        self.initial_object_rot[env_ids] = object_state[:, 3:7].clone()
+        self.initial_object_rot[env_ids] = object_default_state[:, 3:7].clone()
 
-        # 保持USDA文件中的速度设置（通常为0）
-        # object_state[:, 7:] 保持默认值
+        # 重置速度为零
+        object_default_state[:, 7:] = torch.zeros_like(self.object.data.default_root_state[env_ids, 7:])
+        self.object.write_root_pose_to_sim(object_default_state[:, :7], env_ids)
+        self.object.write_root_velocity_to_sim(object_default_state[:, 7:], env_ids)
 
-        # Apply states
-        self.hand.write_joint_state_to_sim(hand_joint_pos, hand_joint_vel, env_ids=env_ids)
+        # 重置手部状态
+        delta_max = self.hand_dof_upper_limits[env_ids] - self.hand.data.default_joint_pos[env_ids]
+        delta_min = self.hand_dof_lower_limits[env_ids] - self.hand.data.default_joint_pos[env_ids]
 
-        # 使用完整的root state写入方法确保位置正确应用
-        self.object.write_root_state_to_sim(object_state, env_ids)
+        dof_pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_hand_dofs), device=self.device)
+        rand_delta = delta_min + (delta_max - delta_min) * 0.5 * dof_pos_noise
+        dof_pos = self.hand.data.default_joint_pos[env_ids] + self.cfg.reset_dof_pos_noise * rand_delta
 
-        # 强制重置物体到默认位置 - 解决位置不匹配问题
-        self.object.reset(env_ids)
+        dof_vel = self.hand.data.default_joint_vel[env_ids] + self.cfg.reset_dof_vel_noise * sample_uniform(
+            -1.0, 1.0, (len(env_ids), self.num_hand_dofs), device=self.device
+        )
+        self.hand.write_joint_state_to_sim(dof_pos, dof_vel, env_ids=env_ids)
 
         # Reset buffers
-        self.prev_targets[env_ids] = hand_joint_pos
-        self.cur_targets[env_ids] = hand_joint_pos
-        self.hand_dof_targets[env_ids] = hand_joint_pos
+        self.prev_targets[env_ids] = dof_pos
+        self.cur_targets[env_ids] = dof_pos
+        self.hand_dof_targets[env_ids] = dof_pos
 
         # Reset success tracking
         self.successes[env_ids] = 0
@@ -359,40 +307,8 @@ class LeaphandEnv(DirectRLEnv):
         self.rotation_progress[env_ids] = 0
         self.last_rotation_dist[env_ids] = 0
 
-        # 生成新的目标旋转
+        # 重置目标旋转
         self._reset_target_pose(env_ids)
-
-    def _reset_object_to_default_position(self, env_ids: Sequence[int] | None = None):
-        """专门用于重置物体到默认位置的方法，解决位置不匹配问题"""
-        if env_ids is None:
-            env_ids = self.object._ALL_INDICES
-
-        # 获取默认状态
-        default_state = self.object.data.default_root_state[env_ids].clone()
-
-        # 检查当前位置与默认位置的差异
-        current_pos = self.object.data.root_pos_w[env_ids]
-        expected_pos = default_state[:, :3] + self.scene.env_origins[env_ids]
-
-        pos_diff = torch.norm(current_pos - expected_pos, dim=-1)
-
-        # 如果位置差异过大，强制重置
-        if torch.any(pos_diff > 0.1):  # 10cm的容差
-            print(f"检测到物体位置不匹配，最大差异: {pos_diff.max().item():.3f}m")
-            print(f"当前位置: {current_pos[0]}")
-            print(f"期望位置: {expected_pos[0]}")
-
-            # 重新设置物体状态
-            corrected_state = default_state.clone()
-            corrected_state[:, :3] += self.scene.env_origins[env_ids]
-
-            # 写入仿真
-            self.object.write_root_state_to_sim(corrected_state, env_ids)
-
-            # 强制更新
-            self.object.update(0.0)
-
-            print("已重置物体到正确位置")
 
     def _compute_intermediate_values(self):
         """计算中间值，用于奖励和完成条件计算"""

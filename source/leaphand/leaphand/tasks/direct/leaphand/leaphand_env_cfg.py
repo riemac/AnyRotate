@@ -150,7 +150,7 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
     action_penalty_scale = -0.001  # 动作惩罚系数 - 增加惩罚鼓励平滑动作
     reach_goal_bonus = 100  # 达到目标奖励 - 降低以平衡奖励
     fall_penalty = -50  # 跌落惩罚 - 增加惩罚
-    fall_dist = 0.15  # 跌落距离阈值 - 更严格的阈值
+    fall_dist = 0.15  # 跌落距离阈值 - 更严格的阈值 - 更大的值允许更自由的跌落
     vel_obs_scale = 0.2  # 速度观测缩放系数
     success_tolerance = 0.15  # 成功容差 - 更严格
     max_consecutive_success = 5  # 最大连续成功次数 - 增加挑战
