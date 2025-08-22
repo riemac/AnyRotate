@@ -38,23 +38,23 @@ LEAPHAND_CONFIG = ArticulationCfg(
     ),
 
     # 机器人初始状态配置
-    # init_state=ArticulationCfg.InitialStateCfg( # 这个即使不配置也会默认设为0
-    #     pos=(0.0, 0.0, 0.095),  # 初始位置(x,y,z)
-    #     rot=(0.0, 1, 0.0, 0.0),  # 初始旋转四元数(w, x, y, z)
-    #     lin_vel=(0.0, 0.0, 0.0),  # 初始线速度(x,y,z)
-    #     ang_vel=(0.0, 0.0, 0.0),  # 初始角速度(x,y,z)
-    #     joint_pos={".*": 0.0},  # 所有关节初始角度设为0
-    #     joint_vel={".*": 0.0},  # 所有关节初始速度设为0
-    # ),
-    
-    init_state=ArticulationCfg.InitialStateCfg( # 这个即使不配置也会默认设为0
-        pos=(0.0, 0.0, 0.0),  # 初始位置(x,y,z)
-        rot=(1, 0, 0, 0),  # 初始旋转四元数(w, x, y, z)
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.095),  # 初始位置(x,y,z)
+        rot=(0.0, 1, 0.0, 0.0),  # 初始旋转四元数(w, x, y, z)
         lin_vel=(0.0, 0.0, 0.0),  # 初始线速度(x,y,z)
         ang_vel=(0.0, 0.0, 0.0),  # 初始角速度(x,y,z)
         joint_pos={".*": 0.0},  # 所有关节初始角度设为0
         joint_vel={".*": 0.0},  # 所有关节初始速度设为0
     ),
+    
+    # init_state=ArticulationCfg.InitialStateCfg( # 这个即使不配置也会默认设为0
+    #     pos=(0.0, 0.0, 0.0),  # 初始位置(x,y,z)
+    #     rot=(1, 0, 0, 0),  # 初始旋转四元数(w, x, y, z)
+    #     lin_vel=(0.0, 0.0, 0.0),  # 初始线速度(x,y,z)
+    #     ang_vel=(0.0, 0.0, 0.0),  # 初始角速度(x,y,z)
+    #     joint_pos={".*": 0.0},  # 所有关节初始角度设为0
+    #     joint_vel={".*": 0.0},  # 所有关节初始速度设为0
+    # ),
 
     # 关节驱动器配置
     actuators={

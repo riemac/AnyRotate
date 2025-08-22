@@ -20,6 +20,7 @@ from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMater
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
+# object_usd_path = "/home/hac/LEAP_Hand_Sim/assets/cube/cube.usd"  # 单独的物体USD文件 - 注释掉URDF转换的cube
 
 @configclass
 class LeaphandEnvCfg(DirectRLEnvCfg):
@@ -97,30 +98,38 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
         },
     )
     
-    # 场景配置
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=100,  # 并行环境数量
-        env_spacing=0.75,  # 环境间距
-        replicate_physics=True  # 是否复制物理引擎
-    )
-    
-    # 物体配置 - 创建简单的立方体物体，参考Isaac Lab官方示例
+    # 物体配置 - 使用Isaac Sim内置的DexCube替代URDF转换的cube
     object_cfg: RigidObjectCfg = RigidObjectCfg(
         prim_path="/World/envs/env_.*/object", # 物体路径 - 使用单独的object路径
-        spawn=sim_utils.CuboidCfg(
-            size=(0.04, 0.04, 0.04),  # 4cm立方体
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(),  # 使用默认刚体属性
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
-            collision_props=sim_utils.CollisionPropertiesCfg(),  # 重要：添加碰撞属性
-            physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=1.0),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), metallic=0.2),
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",  # 使用Isaac Sim内置的DexCube
+            scale=(0.8, 0.8, 0.8),  # 缩放比例 - 调整为合适的大小
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(  # 刚体属性配置
+                kinematic_enabled=False,  # 是否为刚体
+                disable_gravity=False,  # 是否禁用重力
+                enable_gyroscopic_forces=True,  # 是否启用陀螺力
+                solver_position_iteration_count=8,  # 位置求解迭代次数
+                solver_velocity_iteration_count=0,  # 速度求解迭代次数
+                sleep_threshold=0.005,  # 睡眠阈值
+                stabilization_threshold=0.0025,  # 稳定化阈值
+                max_depenetration_velocity=1000.0,  # 最大分离速度
+            ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.1, density=400.0),  # 质量属性 - 使用与Allegro Hand相似的密度
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
+            # pos=(-0.043, 0.042, 0.183),  # 基于USDA文件中的位置，相对于手部位置
             pos=(-0.043, 0.042, 0.183),  # 基于USDA文件中的位置，相对于手部位置
             rot=(1.0, 0.0, 0.0, 0.0),  # 初始旋转
             lin_vel=(0.0, 0.0, 0.0),  # 初始线速度
             ang_vel=(0.0, 0.0, 0.0),  # 初始角速度
         ),
+    )
+
+    # 场景配置
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(
+        num_envs=100,  # 并行环境数量
+        env_spacing=0.75,  # 环境间距
+        replicate_physics=True  # 是否复制物理引擎
     )
 
     # 重置参数配置

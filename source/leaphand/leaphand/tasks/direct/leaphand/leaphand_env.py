@@ -107,10 +107,18 @@ class LeaphandEnv(DirectRLEnv):
         # 在场景设置完成后初始化目标位置
         self._initialize_target_positions()
 
+        # 验证物体位置是否正确
+        self._verify_object_positions()
+
     def _setup_scene(self):
         """设置仿真场景，包括地面、机器人和物体"""
         # Add ground plane
-        spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg()) # 测试不生成地板
+        spawn_ground_plane(
+            prim_path="/World/ground",
+            cfg=GroundPlaneCfg(),
+            translation=(0.0, 0.0, -0.1),
+            orientation=(1.0, 0.0, 0.0, 0.0),  # 确保地面水平
+        )
 
         # Add the hand articulation - 使用USDA场景中的机器人
         self.scene.articulations["hand"] = Articulation(self.cfg.robot_cfg)
@@ -135,7 +143,33 @@ class LeaphandEnv(DirectRLEnv):
         # 获取物体的默认位置
         # default_root_state的形状是[num_envs, 13]，所以我们直接取前3列作为位置
         default_object_pos = self.object.data.default_root_state[:, 0:3].clone()
+        # 添加环境原点偏移
+        default_object_pos += self.scene.env_origins
         self.target_object_pos = default_object_pos
+
+        # 初始化时重置物体位置，确保位置正确
+        self._reset_object_to_default_position()
+
+    def _verify_object_positions(self):
+        """验证物体位置是否与配置一致"""
+        if hasattr(self, 'object') and self.object is not None:
+            # 获取当前物体位置
+            current_pos = self.object.data.root_pos_w
+            # 获取期望位置（默认位置 + 环境原点）
+            expected_pos = self.object.data.default_root_state[:, :3] + self.scene.env_origins
+
+            # 计算位置差异
+            pos_diff = torch.norm(current_pos - expected_pos, dim=-1)
+            max_diff = pos_diff.max().item()
+
+            print(f"物体位置验证:")
+            print(f"  当前位置 (第一个环境): {current_pos[0]}")
+            print(f"  期望位置 (第一个环境): {expected_pos[0]}")
+            print(f"  最大位置差异: {max_diff:.3f}m")
+
+            if max_diff > 0.01:  # 1cm容差
+                print(f"  警告: 检测到位置不匹配! 差异超过1cm")
+                print(f"  建议检查object_cfg.init_state.pos配置")
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
@@ -284,8 +318,12 @@ class LeaphandEnv(DirectRLEnv):
             device=self.device,
         )
 
-        # Reset object to default state from USDA file (with small noise)
+        # Reset object to default state - 修复位置不匹配问题
         object_state = self.object.data.default_root_state[env_ids].clone()
+
+        # 检查并修复位置不匹配问题
+        # 确保物体位置相对于环境原点正确设置
+        object_state[:, :3] += self.scene.env_origins[env_ids]
 
         # 在默认位置基础上添加小量噪声
         object_state[:, :3] += sample_uniform(
@@ -303,8 +341,12 @@ class LeaphandEnv(DirectRLEnv):
 
         # Apply states
         self.hand.write_joint_state_to_sim(hand_joint_pos, hand_joint_vel, env_ids=env_ids)
-        self.object.write_root_pose_to_sim(object_state[:, :7], env_ids)
-        self.object.write_root_velocity_to_sim(object_state[:, 7:], env_ids)
+
+        # 使用完整的root state写入方法确保位置正确应用
+        self.object.write_root_state_to_sim(object_state, env_ids)
+
+        # 强制重置物体到默认位置 - 解决位置不匹配问题
+        self.object.reset(env_ids)
 
         # Reset buffers
         self.prev_targets[env_ids] = hand_joint_pos
@@ -319,6 +361,38 @@ class LeaphandEnv(DirectRLEnv):
 
         # 生成新的目标旋转
         self._reset_target_pose(env_ids)
+
+    def _reset_object_to_default_position(self, env_ids: Sequence[int] | None = None):
+        """专门用于重置物体到默认位置的方法，解决位置不匹配问题"""
+        if env_ids is None:
+            env_ids = self.object._ALL_INDICES
+
+        # 获取默认状态
+        default_state = self.object.data.default_root_state[env_ids].clone()
+
+        # 检查当前位置与默认位置的差异
+        current_pos = self.object.data.root_pos_w[env_ids]
+        expected_pos = default_state[:, :3] + self.scene.env_origins[env_ids]
+
+        pos_diff = torch.norm(current_pos - expected_pos, dim=-1)
+
+        # 如果位置差异过大，强制重置
+        if torch.any(pos_diff > 0.1):  # 10cm的容差
+            print(f"检测到物体位置不匹配，最大差异: {pos_diff.max().item():.3f}m")
+            print(f"当前位置: {current_pos[0]}")
+            print(f"期望位置: {expected_pos[0]}")
+
+            # 重新设置物体状态
+            corrected_state = default_state.clone()
+            corrected_state[:, :3] += self.scene.env_origins[env_ids]
+
+            # 写入仿真
+            self.object.write_root_state_to_sim(corrected_state, env_ids)
+
+            # 强制更新
+            self.object.update(0.0)
+
+            print("已重置物体到正确位置")
 
     def _compute_intermediate_values(self):
         """计算中间值，用于奖励和完成条件计算"""
