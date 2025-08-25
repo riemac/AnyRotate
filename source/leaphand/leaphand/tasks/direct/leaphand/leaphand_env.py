@@ -110,7 +110,7 @@ class LeaphandEnv(DirectRLEnv):
     def _setup_scene(self):
         """设置仿真场景，包括地面、机器人和物体"""
         # Add ground plane
-        spawn_ground_plane(
+        spawn_ground_plane( # 并不存在于self.scene中，作为静态实体不需要交互
             prim_path="/World/ground",
             cfg=GroundPlaneCfg(),
             translation=(0.0, 0.0, -0.1),
@@ -128,7 +128,7 @@ class LeaphandEnv(DirectRLEnv):
 
         # Add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-        light_cfg.func("/World/Light", light_cfg)
+        light_cfg.func("/World/Light", light_cfg) # 并不存在于self.scene中，作为静态实体不需要交互
 
     def _initialize_target_positions(self):
         """初始化目标位置为手部附近的位置"""
@@ -140,52 +140,71 @@ class LeaphandEnv(DirectRLEnv):
         self.target_object_pos = hand_base_pos + target_offset
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
+        # 1. 保存动作
         self.actions = actions.clone()
-
-    def _apply_action(self) -> None:
+        
+        # 2. 将动作从[-1,1]缩放到关节限制范围内
         self.cur_targets[:, self.actuated_dof_indices] = scale(
             self.actions,
             self.hand_dof_lower_limits[:, self.actuated_dof_indices],
             self.hand_dof_upper_limits[:, self.actuated_dof_indices],
         )
+        
+        # 3. 应用移动平均滤波以平滑动作 - new_target = α × current_target + (1-α) × previous_target
         self.cur_targets[:, self.actuated_dof_indices] = (
             self.cfg.act_moving_average * self.cur_targets[:, self.actuated_dof_indices]
             + (1.0 - self.cfg.act_moving_average) * self.prev_targets[:, self.actuated_dof_indices]
         )
+        
+        # 4. 确保目标位置在关节限制范围内
         self.cur_targets[:, self.actuated_dof_indices] = saturate(
             self.cur_targets[:, self.actuated_dof_indices],
             self.hand_dof_lower_limits[:, self.actuated_dof_indices],
             self.hand_dof_upper_limits[:, self.actuated_dof_indices],
         )
 
+        # 5. 更新上一步目标位置
         self.prev_targets[:, self.actuated_dof_indices] = self.cur_targets[:, self.actuated_dof_indices]
 
+    def _apply_action(self) -> None:
+        # 将目标位置应用到机器人关节
         self.hand.set_joint_position_target(
             self.cur_targets[:, self.actuated_dof_indices], joint_ids=self.actuated_dof_indices
         )
 
     def _get_observations(self) -> dict:
+        """获取环境观测状态
+        
+        Returns:
+            dict: 包含策略网络和评论家网络(如果使用非对称观测)所需的观测数据
+        """
         # 首先计算中间值，确保object_pos等属性可用
         self._compute_intermediate_values()
 
+        # 如果使用非对称观测，获取指尖力传感器数据
         if self.cfg.asymmetric_obs:
             self.fingertip_force_sensors = self.hand.root_physx_view.get_link_incoming_joint_force()[
                 :, self.finger_bodies
             ]
 
+        # 根据配置选择观测类型
         if self.cfg.obs_type == "openai":
+            # 使用简化观测空间(仅包含关键信息)
             obs = self.compute_reduced_observations()
         elif self.cfg.obs_type == "full":
+            # 使用完整观测空间(包含所有状态信息)
             obs = self.compute_full_observations()
         else:
             raise ValueError(f"Unknown observations type: {self.cfg.obs_type}")
 
+        # 如果使用非对称观测，计算完整状态信息
         if self.cfg.asymmetric_obs:
             states = self.compute_full_state()
 
-        observations = {"policy": obs}
+        # 构建观测字典
+        observations = {"policy": obs}  # 策略网络使用标准观测
         if self.cfg.asymmetric_obs:
-            observations = {"policy": obs, "critic": states}
+            observations = {"policy": obs, "critic": states}  # 评论家网络使用完整状态信息
         return observations
 
     def _get_rewards(self) -> torch.Tensor:

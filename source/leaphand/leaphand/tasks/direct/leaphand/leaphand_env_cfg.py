@@ -20,14 +20,14 @@ from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMater
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-# object_usd_path = "/home/hac/LEAP_Hand_Sim/assets/cube/cube.usd"  # 单独的物体USD文件 - 注释掉URDF转换的cube
+object_usd_path = "/home/hac/LEAP_Hand_Sim/assets/cube/cube.usd"  # 单独的物体USD文件 - 注释掉URDF转换的cube
 
 @configclass
 class LeaphandEnvCfg(DirectRLEnvCfg):
     """LeapHand手内旋转任务环境配置类,继承自DirectRLEnvCfg"""
 
     # 环境基本参数配置
-    decimation = 4  # 每隔4个物理仿真步骤执行一次策略
+    decimation = 8  # 每隔8个物理仿真步骤执行一次策略 (更接近真实硬件15Hz)
     episode_length_s = 15.0  # 每个episode的时长(秒) - 手内旋转任务相对较短
     action_space = 16  # LeapHand有16个可控关节
     # 观测空间维度计算: 物体位置(3) + 物体旋转(4) + 目标旋转(4) + 手指关节位置(16) + 手指关节速度(16) + 指尖位置(4*3=12) + 物体相对位置(3) + 物体角速度(3) = 61
@@ -98,11 +98,11 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
         },
     )
     
-    # 物体配置 - 使用Isaac Sim内置的DexCube替代URDF转换的cube
+    # 物体配置 - 使用单独的物体USD文件
     object_cfg: RigidObjectCfg = RigidObjectCfg(
         prim_path="/World/envs/env_.*/object", # 物体路径 - 使用单独的object路径
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",  # 使用Isaac Sim内置的DexCube
+            usd_path=object_usd_path,  # 使用单独的物体USD文件
             scale=(0.8, 0.8, 0.8),  # 缩放比例 - 调整为合适的大小
             rigid_props=sim_utils.RigidBodyPropertiesCfg(  # 刚体属性配置
                 kinematic_enabled=False,  # 是否为刚体
