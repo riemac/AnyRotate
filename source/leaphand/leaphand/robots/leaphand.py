@@ -9,7 +9,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from pathlib import Path
 
 # 使用单独的手部模型文件，而不是包含物体的完整场景
-hand_usd_path = str(Path(__file__).parent.parent.parent.parent.parent / "LEAP_Hand_Sim" / "assets" / "leap_hand" / "robot" / "robot.usd")  # 单独的手部USD文件
+hand_usd_path = "/home/hac/LEAP_Hand_Sim/assets/leap_hand/robot/robot.usd"  # 单独的手部USD文件
 
 
 # LEAP Hand机器人的配置

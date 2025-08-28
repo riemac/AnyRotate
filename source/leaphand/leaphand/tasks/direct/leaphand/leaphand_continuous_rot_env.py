@@ -16,6 +16,7 @@ from isaaclab.assets import Articulation, RigidObject
 from isaaclab.envs import DirectRLEnv
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils.math import quat_conjugate, quat_from_angle_axis, quat_mul, sample_uniform, saturate
+from isaaclab.utils.buffers import CircularBuffer
 
 from .leaphand_continuous_rot_env_cfg import LeaphandContinuousRotEnvCfg
 
@@ -93,16 +94,42 @@ class LeaphandContinuousRotEnv(DirectRLEnv):
         # 添加时间步长属性
         self.dt = self.cfg.sim.dt * self.cfg.decimation
 
+        # 初始化历史缓冲区
+        self._initialize_history_buffers()
+
         # 在场景设置完成后初始化目标位置
         self._initialize_target_positions()
 
+    def _initialize_history_buffers(self):
+        """初始化Actor和Critic的历史缓冲区"""
+        # 获取观测配置
+        obs_cfg = self.cfg.observations_cfg
+
+        # 存储历史步数配置
+        self.actor_history_steps = obs_cfg["actor"]["history_steps"]
+        self.critic_history_steps = obs_cfg["critic"]["history_steps"]
+
+        # 初始化历史缓冲区字典
+        self.actor_history_buffers = {}
+        self.critic_history_buffers = {}
+
+        # 为每个组件创建缓冲区（稍后在第一次使用时初始化具体大小）
+        # 这里只是创建字典结构，具体的CircularBuffer会在_get_observations中创建
+        for component_name, enabled in obs_cfg["actor"]["components"].items():
+            if enabled:
+                self.actor_history_buffers[component_name] = None
+
+        for component_name, enabled in obs_cfg["critic"]["components"].items():
+            if enabled:
+                self.critic_history_buffers[component_name] = None
+                
     def _initialize_target_positions(self):
         """初始化目标位置为手部附近的位置"""
         # 设置目标位置为手部附近，而不是物体的初始位置
         # 这样物体可以从高处下落到手部附近
         hand_base_pos = self.hand.data.root_pos_w.clone()
-        # 设置目标位置在手部上方约10cm处
-        target_offset = torch.tensor([0.0, 0.0, 0.1], device=self.device).repeat(self.num_envs, 1)
+        # 设置目标位置在手部上方约5cm处
+        target_offset = torch.tensor([0.0, 0.0, 0.05], device=self.device).repeat(self.num_envs, 1)
         self.target_object_pos = hand_base_pos + target_offset
 
         # 初始化旋转轴（连续旋转任务特有）
@@ -166,24 +193,20 @@ class LeaphandContinuousRotEnv(DirectRLEnv):
 
     def _get_observations(self) -> dict:
         """获取环境观测状态
-        
+
         Returns:
-            dict: 包含策略网络观测数据
+            dict: 包含策略网络和评论家网络观测数据
         """
         # 首先计算中间值，确保object_pos等属性可用
         self._compute_intermediate_values()
 
-        # 根据配置选择观测类型
-        if self.cfg.obs_type == "openai":
-            # 使用简化观测空间(仅包含关键信息)
-            obs = self.compute_reduced_observations()
-        elif self.cfg.obs_type == "full":
-            # 使用完整观测空间(包含所有状态信息)
-            obs = self.compute_full_observations()
-        else:
-            raise ValueError(f"Unknown observations type: {self.cfg.obs_type}")
+        # 构建Actor观测空间
+        actor_obs = self._build_actor_observation()
 
-        return {"policy": obs}
+        # 构建Critic状态空间
+        critic_state = self._build_critic_state()
+
+        return {"policy": actor_obs, "critic": critic_state}
 
     def _get_rewards(self) -> torch.Tensor:
         """计算连续旋转任务的奖励"""
@@ -194,7 +217,7 @@ class LeaphandContinuousRotEnv(DirectRLEnv):
             stability_reward,
             action_penalty,
             fall_penalty,
-        ) = compute_continuous_rotation_rewards(
+        ) = compute_continuous_rotation_rewards( # 元祖解包
             self.object_pos,
             self.object_rot,
             self.last_object_rot,
@@ -253,24 +276,65 @@ class LeaphandContinuousRotEnv(DirectRLEnv):
         """重置指定环境"""
         if env_ids is None:
             env_ids = self.hand._ALL_INDICES
-        
+
         # 调用父类重置方法
         super()._reset_idx(env_ids)
+
+        # 重置物体状态 - 这是关键的缺失部分！
+        object_default_state = self.object.data.default_root_state.clone()[env_ids]
+        pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), 3), device=self.device)
+        # 设置全局物体位置（局部位置 + 位置噪声 + 环境原点）
+        object_default_state[:, 0:3] = (
+            object_default_state[:, 0:3] + self.cfg.reset_position_noise * pos_noise + self.scene.env_origins[env_ids]
+        )
+
+        # 重置速度为零
+        object_default_state[:, 7:] = torch.zeros_like(self.object.data.default_root_state[env_ids, 7:])
+        self.object.write_root_pose_to_sim(object_default_state[:, :7], env_ids)
+        self.object.write_root_velocity_to_sim(object_default_state[:, 7:], env_ids)
+
+        # 重置手部状态
+        delta_max = self.hand_dof_upper_limits[env_ids] - self.hand.data.default_joint_pos[env_ids]
+        delta_min = self.hand_dof_lower_limits[env_ids] - self.hand.data.default_joint_pos[env_ids]
+
+        dof_pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_hand_dofs), device=self.device)
+        rand_delta = delta_min + (delta_max - delta_min) * 0.5 * dof_pos_noise
+        dof_pos = self.hand.data.default_joint_pos[env_ids] + self.cfg.reset_dof_pos_noise * rand_delta
+
+        dof_vel = self.hand.data.default_joint_vel[env_ids] + self.cfg.reset_dof_vel_noise * sample_uniform(
+            -1.0, 1.0, (len(env_ids), self.num_hand_dofs), device=self.device
+        )
+        self.hand.write_joint_state_to_sim(dof_pos, dof_vel, env_ids=env_ids)
 
         # 重置连续旋转特定的缓冲区
         self.cumulative_rotation[env_ids] = 0
 
-        # 确保object_rot已经初始化
-        self._compute_intermediate_values()
-        self.last_object_rot[env_ids] = self.object_rot[env_ids].clone()
+        # 重置上一帧物体旋转为单位四元数（避免调用_compute_intermediate_values造成耦合）
+        self.last_object_rot[env_ids, 0] = 1.0  # w分量
+        self.last_object_rot[env_ids, 1:4] = 0.0  # x,y,z分量
 
         # 重置旋转轴
         self._reset_rotation_axis(env_ids)
 
         # 重置目标缓冲区
-        dof_pos = self.hand.data.joint_pos[env_ids]
         self.prev_targets[env_ids] = dof_pos
         self.cur_targets[env_ids] = dof_pos
+
+        # 重置历史缓冲区
+        if self.cfg.asymmetric_obs:
+            self._reset_history_buffers(env_ids)
+
+    def _reset_history_buffers(self, env_ids):
+        """重置指定环境的历史缓冲区"""
+        # 重置Actor历史缓冲区
+        for component_name, buffer in self.actor_history_buffers.items():
+            if buffer is not None:
+                buffer.reset(env_ids)
+
+        # 重置Critic历史缓冲区
+        for component_name, buffer in self.critic_history_buffers.items():
+            if buffer is not None:
+                buffer.reset(env_ids)
 
     def _compute_intermediate_values(self):
         """计算中间值，用于奖励和完成条件计算"""
@@ -338,61 +402,172 @@ class LeaphandContinuousRotEnv(DirectRLEnv):
         # 累积旋转（分别记录每个轴的旋转）
         self.cumulative_rotation += rotation_along_axis
 
-    def compute_full_observations(self):
-        """计算连续旋转任务的完整观测空间，移除目标旋转信息"""
-        # 物体位置和旋转
-        object_pos = self.object_pos
-        object_rot = self.object_rot
 
-        # 手指关节位置和速度
-        hand_dof_pos = self.hand.data.joint_pos
-        hand_dof_vel = self.hand.data.joint_vel
 
-        # 指尖位置 (用于判断抓取状态)
-        fingertip_positions = self.hand.data.body_pos_w[:, self.finger_bodies]
+    def _get_component_observation(self, component_name: str) -> torch.Tensor:
+        """获取指定组件的观测数据
 
-        # 物体相对于目标位置的位置差异
-        object_relative_pos = object_pos - self.target_object_pos
+        Args:
+            component_name: 组件名称
 
-        # 物体角速度 (用于判断旋转状态)
-        object_ang_vel = self.object.data.root_ang_vel_w
+        Returns:
+            torch.Tensor: 组件观测数据
+        """
+        if component_name == "dof_pos":
+            # 手部关节角度 (16维)
+            return self.hand.data.joint_pos
+        elif component_name == "dof_vel":
+            # 手部关节速度 (16维)
+            return self.hand.data.joint_vel
+        elif component_name == "fingertip_pos":
+            # 指尖位置 (12维: 4指尖 * 3坐标)
+            fingertip_positions = self.hand.data.body_pos_w[:, self.finger_bodies]
+            # 转换为相对于手部基座的局部坐标
+            hand_base_pos = self.hand.data.root_pos_w
+            fingertip_local_pos = fingertip_positions - hand_base_pos.unsqueeze(1)
+            return fingertip_local_pos.view(self.num_envs, -1)
+        elif component_name == "last_action":
+            # 上一个时间步的动作 (16维)
+            return self.actions if hasattr(self, 'actions') else torch.zeros((self.num_envs, self.num_hand_dofs), device=self.device)
+        elif component_name == "rotation_axis":
+            # 当前任务的目标旋转轴 (3维)
+            return self.rotation_axis
+        elif component_name == "object_pose":
+            # 物体位姿 - 相对于环境局部坐标系 (7维: 位置3 + 四元数4)
+            # 使用相对于手部基座的位置，避免全局坐标泄露
+            hand_base_pos = self.hand.data.root_pos_w
+            object_local_pos = self.object_pos - hand_base_pos
+            return torch.cat([object_local_pos, self.object_rot], dim=-1)
+        elif component_name == "object_vel":
+            # 物体线速度和角速度 (6维)
+            object_lin_vel = self.object.data.root_lin_vel_w
+            object_ang_vel = self.object.data.root_ang_vel_w
+            return torch.cat([object_lin_vel, object_ang_vel], dim=-1)
+        elif component_name == "dof_torque":
+            # 手部关节力矩 (16维)
+            return self.hand.root_physx_view.get_dof_actuation_forces()
+        elif component_name == "object_properties":
+            # 物体物理属性 (1维: 质量)
+            # 这里简化为质量，实际可以扩展为更多属性
+            mass = torch.full((self.num_envs, 1), 0.1, device=self.device)  # 从配置中获取质量
+            return mass
+        else:
+            raise ValueError(f"Unknown component: {component_name}")
 
-        # 当前旋转轴信息（让智能体知道应该沿哪个轴旋转）
-        rotation_axis = self.rotation_axis
+    def _build_actor_observation(self) -> torch.Tensor:
+        """构建Actor观测空间
 
-        # 拼接所有观测（移除目标旋转）
-        # 维度: 物体位置(3) + 物体旋转(4) + 手指关节位置(16) + 手指关节速度(16) + 指尖位置(12) + 物体相对位置(3) + 物体角速度(3) + 旋转轴(3) = 60
-        obs = torch.cat([
-            object_pos,                                    # 3
-            object_rot,                                    # 4
-            hand_dof_pos,                                  # 16
-            hand_dof_vel,                                  # 16
-            fingertip_positions.view(self.num_envs, -1),   # 12 (4 fingertips * 3 coords)
-            object_relative_pos,                           # 3
-            object_ang_vel,                                # 3
-            rotation_axis,                                 # 3
-        ], dim=-1)
+        Returns:
+            torch.Tensor: Actor观测向量（包含历史）
+        """
+        obs_cfg = self.cfg.observations_cfg["actor"]
+        components = []
 
-        return obs
+        # 收集当前时间步的所有组件
+        for component_name, enabled in obs_cfg["components"].items():
+            if enabled:
+                component_data = self._get_component_observation(component_name)
 
-    def compute_reduced_observations(self):
-        """简化观测空间 - 仅包含关键信息，移除目标旋转"""
-        # 物体旋转
-        object_rot = self.object_rot
+                # 初始化历史缓冲区（如果还没有初始化）
+                if self.actor_history_buffers[component_name] is None:
+                    self.actor_history_buffers[component_name] = CircularBuffer(
+                        max_len=self.actor_history_steps,
+                        batch_size=self.num_envs,
+                        device=self.device
+                    )
 
-        # 手指关节位置
-        hand_dof_pos = self.hand.data.joint_pos
+                # 添加到历史缓冲区
+                self.actor_history_buffers[component_name].append(component_data)
 
-        # 当前旋转轴
-        rotation_axis = self.rotation_axis
+                # 获取历史数据并展平
+                history_data = self.actor_history_buffers[component_name].buffer
+                # 检查维度并重新排列: (history_steps, num_envs, feature_dim) -> (num_envs, history_steps * feature_dim)
+                if len(history_data.shape) == 3:
+                    history_data = history_data.permute(1, 0, 2).reshape(self.num_envs, -1)
+                elif len(history_data.shape) == 2:
+                    # 如果只有2维，说明feature_dim=1，需要添加维度
+                    history_data = history_data.permute(1, 0).reshape(self.num_envs, -1)
+                components.append(history_data)
 
-        obs = torch.cat([
-            object_rot,      # 4
-            hand_dof_pos,    # 16
-            rotation_axis,   # 3
-        ], dim=-1)         # 总计 23 维
+        # 拼接所有组件
+        if components:
+            return torch.cat(components, dim=-1)
+        else:
+            return torch.zeros((self.num_envs, 0), device=self.device)
 
-        return obs
+    def _build_critic_state(self) -> torch.Tensor:
+        """构建Critic状态空间
+
+        Returns:
+            torch.Tensor: Critic状态向量（包含历史）
+        """
+        obs_cfg = self.cfg.observations_cfg["critic"]
+        components = []
+
+        # 收集当前时间步的所有组件
+        for component_name, enabled in obs_cfg["components"].items():
+            if enabled:
+                component_data = self._get_component_observation(component_name)
+
+                # 初始化历史缓冲区（如果还没有初始化）
+                if self.critic_history_buffers[component_name] is None:
+                    self.critic_history_buffers[component_name] = CircularBuffer(
+                        max_len=self.critic_history_steps,
+                        batch_size=self.num_envs,
+                        device=self.device
+                    )
+
+                # 添加到历史缓冲区
+                self.critic_history_buffers[component_name].append(component_data)
+
+                # 获取历史数据并展平
+                history_data = self.critic_history_buffers[component_name].buffer
+                # 检查维度并重新排列: (history_steps, num_envs, feature_dim) -> (num_envs, history_steps * feature_dim)
+                if len(history_data.shape) == 3:
+                    history_data = history_data.permute(1, 0, 2).reshape(self.num_envs, -1)
+                elif len(history_data.shape) == 2:
+                    # 如果只有2维，说明feature_dim=1，需要添加维度
+                    history_data = history_data.permute(1, 0).reshape(self.num_envs, -1)
+                components.append(history_data)
+
+        # 拼接所有组件
+        if components:
+            return torch.cat(components, dim=-1)
+        else:
+            return torch.zeros((self.num_envs, 0), device=self.device)
+
+    def get_history_info(self) -> dict:
+        """获取历史缓冲区信息
+
+        Returns:
+            dict: 包含历史步数和当前缓存状态的信息
+        """
+        info = {
+            "actor_history_steps": self.actor_history_steps,
+            "critic_history_steps": self.critic_history_steps,
+            "actor_buffers": {},
+            "critic_buffers": {}
+        }
+
+        # Actor缓冲区信息
+        for component_name, buffer in self.actor_history_buffers.items():
+            if buffer is not None:
+                info["actor_buffers"][component_name] = {
+                    "max_length": buffer.max_length,
+                    "current_length": min(buffer._num_pushes[0].item(), buffer.max_length),
+                    "buffer_shape": buffer.buffer.shape if buffer.buffer is not None else None
+                }
+
+        # Critic缓冲区信息
+        for component_name, buffer in self.critic_history_buffers.items():
+            if buffer is not None:
+                info["critic_buffers"][component_name] = {
+                    "max_length": buffer.max_length,
+                    "current_length": min(buffer._num_pushes[0].item(), buffer.max_length),
+                    "buffer_shape": buffer.buffer.shape if buffer.buffer is not None else None
+                }
+
+        return info
 
 
 @torch.jit.script

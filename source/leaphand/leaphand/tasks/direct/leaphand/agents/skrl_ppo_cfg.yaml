@@ -1,80 +1,83 @@
+# 设置随机种子,确保实验可重复性
 seed: 42
 
 
-# Models are instantiated using skrl's model instantiator utility
+# 模型配置部分
+# 使用skrl的模型实例化工具来创建策略网络和价值网络
 # https://skrl.readthedocs.io/en/latest/api/utils/model_instantiators.html
 models:
-  separate: False
-  policy:  # see gaussian_model parameters
-    class: GaussianMixin
-    clip_actions: False
-    clip_log_std: True
-    min_log_std: -20.0
-    max_log_std: 2.0
-    initial_log_std: 0.0
-    network:
+  # 是否使用分离的策略网络和价值网络
+  separate: True
+  # 策略网络配置 - 使用高斯混合模型
+  policy:
+    class: GaussianMixin  # 高斯策略网络
+    clip_actions: False   # 是否裁剪动作值
+    clip_log_std: True    # 是否裁剪log标准差
+    min_log_std: -20.0    # log标准差最小值
+    max_log_std: 2.0      # log标准差最大值 
+    initial_log_std: 0.0  # log标准差初始值
+    network:  # 网络结构
       - name: net
-        input: STATES
-        layers: [32, 32]
-        activations: elu
-    output: ACTIONS
-  value:  # see deterministic_model parameters
-    class: DeterministicMixin
-    clip_actions: False
-    network:
+        input: STATES     # 输入为状态
+        layers: [512, 512, 256, 128]  # 两个隐藏层,每层32个神经元
+        activations: elu  # 激活函数使用elu
+    output: ACTIONS       # 输出为动作
+
+  # 价值网络配置 - 使用确定性模型  
+  value:
+    class: DeterministicMixin  # 确定性价值网络
+    clip_actions: False        # 是否裁剪动作值
+    network:  # 网络结构
       - name: net
-        input: STATES
-        layers: [32, 32]
-        activations: elu
-    output: ONE
+        input: STATES     # 输入为状态
+        layers: [512, 512, 256, 128]  # 两个隐藏层,每层32个神经元
+        activations: elu  # 激活函数使用elu
+    output: ONE          # 输出为单个值(状态价值)
 
 
-# Rollout memory
-# https://skrl.readthedocs.io/en/latest/api/memories/random.html
+# 回放缓冲区配置
 memory:
-  class: RandomMemory
-  memory_size: -1  # automatically determined (same as agent:rollouts)
+  class: RandomMemory    # 使用随机采样的回放缓冲区
+  memory_size: -1        # 缓冲区大小自动设置为与rollouts相同
 
 
-# PPO agent configuration (field names are from PPO_DEFAULT_CONFIG)
-# https://skrl.readthedocs.io/en/latest/api/agents/ppo.html
+# PPO算法配置
 agent:
-  class: PPO
-  rollouts: 32
-  learning_epochs: 8
-  mini_batches: 8
-  discount_factor: 0.99
-  lambda: 0.95
-  learning_rate: 5.0e-04
-  learning_rate_scheduler: KLAdaptiveLR
+  class: PPO             # 使用PPO算法
+  rollouts: 64          # 每次收集32条轨迹
+  learning_epochs: 4    # 每批数据训练8轮
+  mini_batches: 8      # 将数据分成8个mini-batch
+  discount_factor: 0.99 # 折扣因子γ
+  lambda: 0.95         # GAE-Lambda参数
+  learning_rate: 2.0e-04 # 学习率
+  learning_rate_scheduler: KLAdaptiveLR  # 使用KL散度自适应学习率
   learning_rate_scheduler_kwargs:
-    kl_threshold: 0.008
-  state_preprocessor: RunningStandardScaler
+    kl_threshold: 0.008  # KL散度阈值
+  state_preprocessor: RunningStandardScaler  # 状态标准化
   state_preprocessor_kwargs: null
-  value_preprocessor: RunningStandardScaler
+  value_preprocessor: RunningStandardScaler  # 价值标准化  
   value_preprocessor_kwargs: null
-  random_timesteps: 0
-  learning_starts: 0
-  grad_norm_clip: 1.0
-  ratio_clip: 0.2
-  value_clip: 0.2
-  clip_predicted_values: True
-  entropy_loss_scale: 0.0
-  value_loss_scale: 2.0
-  kl_threshold: 0.0
-  rewards_shaper_scale: 0.1
-  time_limit_bootstrap: False
-  # logging and checkpoint
+  random_timesteps: 0    # 随机探索步数
+  learning_starts: 0     # 开始学习的步数
+  grad_norm_clip: 1.0    # 梯度裁剪范数
+  ratio_clip: 0.2        # PPO裁剪范围ε
+  value_clip: 0.2        # 价值函数裁剪范围
+  clip_predicted_values: True  # 是否裁剪预测值
+  entropy_loss_scale: 0.01      # 熵正则化系数
+  value_loss_scale: 2.0        # 价值损失系数
+  kl_threshold: 0.0            # KL散度阈值
+  rewards_shaper_scale: 0.1    # 奖励整形系数
+  time_limit_bootstrap: False   # 是否在时间限制时进行bootstrap
+  # 日志和检查点配置
   experiment:
-    directory: "cartpole_direct"
-    experiment_name: ""
-    write_interval: auto
-    checkpoint_interval: auto
+    directory: "leaphand_direct"  # 实验保存目录
+    experiment_name: "continuous_rotation"           # 实验名称
+    write_interval: auto          # 写入间隔
+    checkpoint_interval: auto     # 检查点保存间隔
 
 
-# Sequential trainer
-# https://skrl.readthedocs.io/en/latest/api/trainers/sequential.html
+# 训练器配置
 trainer:
-  class: SequentialTrainer
-  timesteps: 4800
-  environment_info: log
+  class: SequentialTrainer  # 使用顺序训练器
+  timesteps: 480000           # 总训练步数（并行环境累计）
+  environment_info: log     # 环境信息记录类型

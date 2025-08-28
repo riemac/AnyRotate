@@ -105,7 +105,7 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
             usd_path=object_usd_path,  # 使用单独的物体USD文件
             scale=(0.8, 0.8, 0.8),  # 缩放比例 - 调整为合适的大小
             rigid_props=sim_utils.RigidBodyPropertiesCfg(  # 刚体属性配置
-                kinematic_enabled=False,  # 是否为刚体
+                kinematic_enabled=False,  # 是否启用运动学
                 disable_gravity=False,  # 是否禁用重力
                 enable_gyroscopic_forces=True,  # 是否启用陀螺力
                 solver_position_iteration_count=8,  # 位置求解迭代次数

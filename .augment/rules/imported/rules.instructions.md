@@ -1,7 +1,8 @@
 ---
 type: "agent_requested"
-description: "询问isaacsim/isaaclab等有关问题或基于isaacsim/isaaclab进行开发时"
+description: "当每次对话开始时；询问isaacsim/isaaclab等有关问题或基于isaacsim/isaaclab进行开发时"
 ---
+
 ## 核心原则
 
 1.  **🤖 主动确认，持续循环 (Proactive Confirmation, Continuous Loop)**
@@ -18,8 +19,6 @@ description: "询问isaacsim/isaaclab等有关问题或基于isaacsim/isaaclab�
         2.  **官方文档:** `context7` 工具。
         3.  **网络搜索:** GitHub 仓库等权威技术资料。
 
----
-
 ## 工作流程
 
 | 流程 | 步骤 |
@@ -27,7 +26,9 @@ description: "询问isaacsim/isaaclab等有关问题或基于isaacsim/isaaclab�
 | **新功能开发** | 1. **规划:** 在对话中提出实现计划。<br>2. **确认:** 调用 `mcp-feedback-enhanced` 请求批准。<br>3. **执行:** 获得同意后，编码实现。 |
 | **错误调试** | 1. **收集:** 在终端中定位关键错误信息。<br>2. **分析:** 在对话中结合日志，提出原因假设和调试步骤。<br>3. **确认:** 调用 `mcp-feedback-enhanced` 请求批准后，开始调试。 |
 
----
+## 注意
+
+**查询顺序:** 关于isaaclab的问题，优先查询本地IsaacLab源码，其他资料参考 context7 mcp。
 
 ## 代码实践
 
