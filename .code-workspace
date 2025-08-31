@@ -1,7 +1,8 @@
 {
   "folders": [
     {"path": "leaphand"},
-    {"path": "IsaacLab"}
+    {"path": "IsaacLab"},
+    {"path": "LEAP_Hand_Isaac_Lab"}
   ],
   "settings": {
     "python.analysis.extraPaths": [

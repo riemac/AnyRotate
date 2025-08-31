@@ -10,7 +10,7 @@ applyTo: '**'
 ## 项目说明
 本文档用于记录IsaacLab项目开发过程中的关键信息和规范，便于团队成员快速了解和遵循项目结构。
 
-## 项目结构
+## 工作区结构
 ```bash
 leaphand/                    # 项目根目录 `Project`
 ├── scripts/                 # 脚本目录
@@ -37,9 +37,12 @@ leaphand/                    # 项目根目录 `Project`
 │       │   │   └── manager_based/ # ManagerBasedRLEnv
 │       │   │       └── leaphand/
 │       └── pyproject.toml   # Python项目配置
-├── LEAP_Hand_Sim/           # LeapHand手内旋转项目文件（基于isaac gym的，仅供参考）
 ├── logs/                    # 日志目录
 └── outputs/                 # 输出目录
+
+IsaacLab/                    # IsaacLab官方核心框架目录
+
+LEAP_Hand_Isaac_Lab/           # LeapHand手官方的手内旋转项目
 ```
 
 ## 开发规范
@@ -60,4 +63,4 @@ leaphand/                    # 项目根目录 `Project`
 from leaphand.tasks.direct.leaphand.leaphand_env import LeaphandEnv
 from leaphand.tasks.direct.leaphand.leaphand_env_cfg import LeaphandEnvCfg
 ```
-- **环境激活:** 执行终端指令前需在 `~/isaac` 目录下激活 uv 环境: `source .venv/bin/activate`
+- **环境激活:** 执行终端指令前一定要在 `~/isaac` 目录下激活 uv 环境: `source .venv/bin/activate`

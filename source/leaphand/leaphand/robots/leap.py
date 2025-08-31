@@ -1,20 +1,8 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
-
-"""Configuration for the Allegro Hand robots from Wonik Robotics.
-
-The following configurations are available:
-
-* :obj:`ALLEGRO_HAND_CFG`: Allegro Hand with implicit actuator model.
-
-Reference:
-
-* https://www.wonikrobotics.com/robot-hand
-
 """
+LEAP hand configs file for IsaacLab.
 
+Modified template from https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab_assets/isaaclab_assets/robots/allegro.py
+"""
 
 import math
 
@@ -22,22 +10,20 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from pathlib import Path
 
-##
-# Configuration
-##
-
-ALLEGRO_HAND_CFG = ArticulationCfg(
+LEAP_HAND_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/AllegroHand/allegro_hand_instanceable.usd",
+        usd_path=f"{Path(__file__).parent.parent.parent}/assets/leap_hand_v1_right/leap_hand_right.usd",
         activate_contact_sensors=False,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            kinematic_enabled=False,
             disable_gravity=True,
             retain_accelerations=False,
             enable_gyroscopic_forces=False,
             angular_damping=0.01,
             max_linear_velocity=1000.0,
-            max_angular_velocity=64 / math.pi * 180.0,
+            max_angular_velocity=64 / math.pi * 180.0, 
             max_depenetration_velocity=1000.0,
             max_contact_impulse=1e32,
         ),
@@ -47,13 +33,14 @@ ALLEGRO_HAND_CFG = ArticulationCfg(
             solver_velocity_iteration_count=0,
             sleep_threshold=0.005,
             stabilization_threshold=0.0005,
+            fix_root_link=True
         ),
         # collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.5),
-        rot=(0.257551, 0.283045, 0.683330, -0.621782),
-        joint_pos={"^(?!thumb_joint_0).*": 0.0, "thumb_joint_0": 0.28},
+        rot=(0.5, 0.5, -0.5, 0.5),
+        joint_pos={"a_.*": 0.0},
     ),
     actuators={
         "fingers": ImplicitActuatorCfg(
@@ -67,4 +54,3 @@ ALLEGRO_HAND_CFG = ArticulationCfg(
     },
     soft_joint_pos_limit_factor=1.0,
 )
-"""Configuration of Allegro Hand robot."""
