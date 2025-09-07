@@ -251,11 +251,30 @@ class LeaphandContinuousRotEnv(DirectRLEnv):
         if "log" not in self.extras:
             self.extras["log"] = dict()
         
+        # 记录所有奖励细分项
+        self.extras["log"]["reward/rotation_velocity"] = rotation_velocity_reward.mean()
+        self.extras["log"]["reward/grasp"] = grasp_reward.mean()
+        self.extras["log"]["reward/stability"] = stability_reward.mean()
+        self.extras["log"]["penalty/action"] = action_penalty.mean()
+        self.extras["log"]["penalty/fall"] = fall_penalty.mean()
+        self.extras["log"]["reward/total"] = total_reward.mean()
+        
         # 记录连续旋转特定的指标
-        self.extras["log"]["rotation_velocity_reward"] = rotation_velocity_reward.mean()
-        self.extras["log"]["cumulative_rotation_x"] = self.cumulative_rotation[:, 0].mean()
-        self.extras["log"]["cumulative_rotation_y"] = self.cumulative_rotation[:, 1].mean()
-        self.extras["log"]["cumulative_rotation_z"] = self.cumulative_rotation[:, 2].mean()
+        self.extras["log"]["rotation/cumulative_x"] = self.cumulative_rotation[:, 0].mean()
+        self.extras["log"]["rotation/cumulative_y"] = self.cumulative_rotation[:, 1].mean()
+        self.extras["log"]["rotation/cumulative_z"] = self.cumulative_rotation[:, 2].mean()
+        
+        # 记录物体状态指标
+        object_dist = torch.norm(self.object_pos - self.target_object_pos, p=2, dim=-1)
+        self.extras["log"]["object/distance_to_target"] = object_dist.mean()
+        self.extras["log"]["object/height"] = self.object_pos[:, 2].mean()
+        
+        # 记录手部状态指标
+        fingertip_positions = self.hand.data.body_pos_w[:, self.finger_bodies]
+        fingertip_to_object = fingertip_positions - self.object_pos.unsqueeze(1)
+        fingertip_distances = torch.norm(fingertip_to_object, p=2, dim=-1)
+        self.extras["log"]["hand/avg_fingertip_distance"] = fingertip_distances.mean()
+        self.extras["log"]["hand/joint_position_variance"] = self.hand.data.joint_pos.var(dim=0).mean()
 
         return total_reward
 

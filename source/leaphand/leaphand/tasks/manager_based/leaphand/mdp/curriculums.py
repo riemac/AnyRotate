@@ -1,0 +1,376 @@
+"""
+课程学习模块 - 为LeapHand连续旋转任务提供课程学习MDP函数
+
+该模块提供了各种课程学习函数，可以在环境配置中灵活组合使用：
+1. 动态奖励权重调整
+2. 自适应域随机化 (ADR)
+3. 动态旋转轴复杂度调整
+
+使用方式与Isaac Lab官方风格一致：
+```python
+@configclass
+class CurriculumCfg:
+    grasp_stability_weight = CurrTerm(func=leaphand_mdp.modify_grasp_stability_weight)
+    rotation_axis_complexity = CurrTerm(func=leaphand_mdp.progressive_rotation_axis)
+```
+
+作者: AI Assistant
+日期: 2025-01-05
+"""
+
+from __future__ import annotations
+
+import torch
+from typing import TYPE_CHECKING, Sequence
+
+import isaaclab.envs.mdp as mdp
+
+if TYPE_CHECKING:
+    from isaaclab.envs import ManagerBasedRLEnv
+
+
+# ============================================================================
+# 奖励权重调整课程学习函数
+# ============================================================================
+
+def modify_grasp_stability_weight(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    term_name: str = "grasp_stability",
+    early_weight: float = 2.0,
+    mid_weight: float = 1.5,
+    late_weight: float = 1.0,
+    mid_step: int = 500_000,
+    late_step: int = 1_000_000
+) -> float:
+    """
+    抓取稳定性奖励权重调整 - 训练初期高权重，后期逐步降低
+
+    Args:
+        env: 环境实例
+        env_ids: 环境ID列表
+        term_name: 奖励项名称
+        early_weight: 初期权重
+        mid_weight: 中期权重
+        late_weight: 后期权重
+        mid_step: 中期开始步数
+        late_step: 后期开始步数
+
+    Returns:
+        新的奖励权重值
+    """
+    current_step = env.common_step_counter
+
+    if current_step >= late_step:
+        return late_weight
+    elif current_step >= mid_step:
+        return mid_weight
+    else:
+        return early_weight
+
+
+def modify_rotation_velocity_weight(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    term_name: str = "rotation_velocity_reward",
+    early_weight: float = 10.0,
+    mid_weight: float = 15.0,
+    late_weight: float = 20.0,
+    mid_step: int = 300_000,
+    late_step: int = 800_000
+) -> float:
+    """
+    旋转速度奖励权重调整 - 训练初期低权重，后期逐步提高
+
+    Args:
+        env: 环境实例
+        env_ids: 环境ID列表
+        term_name: 奖励项名称
+        early_weight: 初期权重
+        mid_weight: 中期权重
+        late_weight: 后期权重
+        mid_step: 中期开始步数
+        late_step: 后期开始步数
+
+    Returns:
+        新的奖励权重值
+    """
+    current_step = env.common_step_counter
+
+    if current_step >= late_step:
+        return late_weight
+    elif current_step >= mid_step:
+        return mid_weight
+    else:
+        return early_weight
+
+
+def modify_fall_penalty_weight(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    term_name: str = "fall_penalty",
+    early_weight: float = -50.0,
+    mid_weight: float = -100.0,
+    late_weight: float = -150.0,
+    mid_step: int = 600_000,
+    late_step: int = 1_200_000
+) -> float:
+    """
+    掉落惩罚权重调整 - 随训练进度逐步加重惩罚
+
+    Args:
+        env: 环境实例
+        env_ids: 环境ID列表
+        term_name: 奖励项名称
+        early_weight: 初期权重
+        mid_weight: 中期权重
+        late_weight: 后期权重
+        mid_step: 中期开始步数
+        late_step: 后期开始步数
+
+    Returns:
+        新的奖励权重值
+    """
+    current_step = env.common_step_counter
+
+    if current_step >= late_step:
+        return late_weight
+    elif current_step >= mid_step:
+        return mid_weight
+    else:
+        return early_weight
+
+
+# ============================================================================
+# 自适应域随机化课程学习函数
+# ============================================================================
+
+def object_mass_adr(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    old_value: tuple[float, float],
+    enable_step: int = 600_000,
+    max_strength_step: int = 1_200_000,
+    max_variation: float = 0.5
+) -> tuple[float, float]:
+    """
+    物体质量自适应域随机化 - 修改EventCfg中的mass_distribution_params
+
+    Args:
+        env: 环境实例
+        env_ids: 环境ID列表
+        old_value: 当前的mass_distribution_params值 (min_scale, max_scale)
+        enable_step: 启用步数
+        max_strength_step: 达到最大强度的步数
+        max_variation: 最大变化幅度（相对于1.0的偏差）
+
+    Returns:
+        新的mass_distribution_params值 (min_scale, max_scale)
+    """
+    current_step = env.common_step_counter
+
+    if current_step < enable_step:
+        return mdp.modify_env_param.NO_CHANGE
+
+    if current_step >= max_strength_step:
+        strength = max_variation
+    else:
+        progress = (current_step - enable_step) / (max_strength_step - enable_step)
+        strength = progress * max_variation
+
+    # 计算新的随机化范围：1.0 ± strength
+    min_scale = 1.0 - strength
+    max_scale = 1.0 + strength
+
+    return (min_scale, max_scale)
+
+
+def friction_adr(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    old_value: tuple[float, float],
+    enable_step: int = 800_000,
+    max_strength_step: int = 1_500_000,
+    max_variation: float = 0.3
+) -> tuple[float, float]:
+    """
+    摩擦系数自适应域随机化 - 修改EventCfg中的static_friction_range
+
+    Args:
+        env: 环境实例
+        env_ids: 环境ID列表
+        old_value: 当前的static_friction_range值 (min_friction, max_friction)
+        enable_step: 启用步数
+        max_strength_step: 达到最大强度的步数
+        max_variation: 最大变化幅度（相对于1.0的偏差）
+
+    Returns:
+        新的static_friction_range值 (min_friction, max_friction)
+    """
+    current_step = env.common_step_counter
+
+    if current_step < enable_step:
+        return mdp.modify_env_param.NO_CHANGE
+
+    if current_step >= max_strength_step:
+        strength = max_variation
+    else:
+        progress = (current_step - enable_step) / (max_strength_step - enable_step)
+        strength = progress * max_variation
+
+    # 计算新的随机化范围：1.0 ± strength，确保最小值不小于0.1
+    min_friction = max(0.1, 1.0 - strength)
+    max_friction = 1.0 + strength
+
+    return (min_friction, max_friction)
+
+
+def object_scale_adr(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    old_value: dict[str, tuple[float, float]],
+    enable_step: int = 1_000_000,
+    max_strength_step: int = 1_800_000,
+    max_variation: float = 0.2
+) -> dict[str, tuple[float, float]]:
+    """
+    物体尺寸自适应域随机化 - 修改EventCfg中的scale_range
+
+    Args:
+        env: 环境实例
+        env_ids: 环境ID列表
+        old_value: 当前的scale_range值 {"x": (min_scale, max_scale), "y": ..., "z": ...}
+        enable_step: 启用步数
+        max_strength_step: 达到最大强度的步数
+        max_variation: 最大变化幅度（相对于1.0的偏差）
+
+    Returns:
+        新的scale_range值 {"x": (min_scale, max_scale), "y": ..., "z": ...}
+    """
+    current_step = env.common_step_counter
+
+    if current_step < enable_step:
+        return mdp.modify_env_param.NO_CHANGE
+
+    if current_step >= max_strength_step:
+        strength = max_variation
+    else:
+        progress = (current_step - enable_step) / (max_strength_step - enable_step)
+        strength = progress * max_variation
+
+    # 计算新的随机化范围：1.0 ± strength
+    min_scale = 1.0 - strength
+    max_scale = 1.0 + strength
+
+    # 返回所有轴的随机化范围
+    return {
+        "x": (min_scale, max_scale),
+        "y": (min_scale, max_scale),
+        "z": (min_scale, max_scale)
+    }
+
+
+
+
+
+# ============================================================================
+# 旋转轴复杂度课程学习函数
+# ============================================================================
+
+def progressive_rotation_axis(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    old_value: str,
+    x_axis_step: int = 0,
+    y_axis_step: int = 400_000,
+    z_axis_step: int = 800_000,
+    random_axis_step: int = 1_200_000
+) -> str:
+    """
+    渐进式旋转轴复杂度调整：X轴 → Y轴 → Z轴 → 任意轴
+
+    Args:
+        env: 环境实例
+        env_ids: 环境ID列表
+        old_value: 当前旋转轴模式
+        x_axis_step: X轴阶段开始步数
+        y_axis_step: Y轴阶段开始步数
+        z_axis_step: Z轴阶段开始步数
+        random_axis_step: 任意轴阶段开始步数
+
+    Returns:
+        新的旋转轴模式
+    """
+    current_step = env.common_step_counter
+
+    if current_step >= random_axis_step:
+        return "random"
+    elif current_step >= z_axis_step:
+        return "z_axis"
+    elif current_step >= y_axis_step:
+        return "y_axis"
+    else:
+        return "x_axis"
+
+
+def simple_rotation_axis(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    old_value: str,
+    z_axis_step: int = 0,
+    random_axis_step: int = 1_000_000
+) -> str:
+    """
+    简化旋转轴复杂度调整：Z轴 → 任意轴
+
+    Args:
+        env: 环境实例
+        env_ids: 环境ID列表
+        old_value: 当前旋转轴模式
+        z_axis_step: Z轴阶段开始步数
+        random_axis_step: 任意轴阶段开始步数
+
+    Returns:
+        新的旋转轴模式
+    """
+    current_step = env.common_step_counter
+
+    if current_step >= random_axis_step:
+        return "random"
+    else:
+        return "z_axis"
+
+
+def custom_rotation_axis(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    old_value: str,
+    axis_schedule: dict[int, str]
+) -> str:
+    """
+    自定义旋转轴复杂度调整
+
+    Args:
+        env: 环境实例
+        env_ids: 环境ID列表
+        old_value: 当前旋转轴模式
+        axis_schedule: 步数到轴模式的映射字典，例如：
+                      {0: "x_axis", 500000: "y_axis", 1000000: "random"}
+
+    Returns:
+        新的旋转轴模式
+    """
+    current_step = env.common_step_counter
+
+    # 找到当前步数对应的轴模式
+    applicable_steps = [step for step in axis_schedule.keys() if step <= current_step]
+    if applicable_steps:
+        latest_step = max(applicable_steps)
+        return axis_schedule[latest_step]
+
+    # 如果没有找到适用的步数，返回第一个轴模式
+    if axis_schedule:
+        first_step = min(axis_schedule.keys())
+        return axis_schedule[first_step]
+
+    return mdp.modify_term_cfg.NO_CHANGE

@@ -24,22 +24,22 @@ class LeaphandContinuousRotEnvCfg(LeaphandEnvCfg):
     # 配置驱动的观测架构
     observations_cfg = {
         "actor": {
-            "history_steps": 3,  # Actor历史窗口长度
+            "history_steps": 2,  # Actor历史窗口长度
             "components": {
                 # 真实世界可通过传感器获取的信息
                 "dof_pos": True,        # 手部关节角度 (16维)
-                "dof_vel": True,        # 手部关节速度 (16维)
+                "dof_vel": False,        # 手部关节速度 (16维)
                 "fingertip_pos": True,  # 指尖位置 (12维: 4指尖 * 3坐标)
                 "last_action": True,    # 上一个时间步的动作 (16维)
                 "rotation_axis": True,  # 当前任务的目标旋转轴 (3维)
             }
         },
         "critic": {
-            "history_steps": 3,  # Critic历史窗口长度
+            "history_steps": 2,  # Critic历史窗口长度
             "components": {
                 # 继承Actor的所有组件
                 "dof_pos": True,
-                "dof_vel": True,
+                "dof_vel": False,
                 "fingertip_pos": True,
                 "last_action": True,
                 "rotation_axis": True,
@@ -55,11 +55,11 @@ class LeaphandContinuousRotEnvCfg(LeaphandEnvCfg):
     # 覆盖基类的观测空间配置以匹配实际维度
     # Actor观测空间维度 (不包含历史): dof_pos(16) + dof_vel(16) + fingertip_pos(12) + last_action(16) + rotation_axis(3) = 63
     # 包含历史: 63 * 2 = 126
-    observation_space = 189  # Actor观测空间维度 (包含2步历史)
+    observation_space = 94  # Actor观测空间维度 (包含2步历史)
 
     # Critic状态空间维度 (不包含历史): Actor所有组件(63) + object_pose(7) + object_vel(6) + dof_torque(16) + object_properties(1) = 93
     # 包含历史: 93 * 2 = 186
-    state_space = 279  # Critic状态空间维度 (包含2步历史)
+    state_space = 154  # Critic状态空间维度 (包含2步历史)
 
     # 连续旋转任务特定参数
     rotation_velocity_reward_scale = 15.0  # 旋转速度奖励系数 - 主要奖励
@@ -68,7 +68,7 @@ class LeaphandContinuousRotEnvCfg(LeaphandEnvCfg):
     change_rotation_axis_interval = 0  # 更换旋转轴的间隔（步数），0表示不更换
 
     # 调整现有奖励参数以适应连续旋转
-    grasp_reward_scale = 8.0  # 增加抓取奖励，确保物体不掉落
+    grasp_reward_scale = 5.0  # 增加抓取奖励，确保物体不掉落
     stability_reward_scale = 3.0  # 增加稳定性奖励，但不过度限制旋转
     action_penalty_scale = -0.0005  # 减少动作惩罚，允许更大的动作幅度
 

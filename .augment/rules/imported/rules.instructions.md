@@ -1,5 +1,5 @@
 ---
-type: "agent_requested"
+type: "always_apply"
 description: "当每次对话开始时；询问isaacsim/isaaclab等有关问题或基于isaacsim/isaaclab进行开发时"
 ---
 
@@ -29,6 +29,7 @@ description: "当每次对话开始时；询问isaacsim/isaaclab等有关问题�
 ## 注意
 
 **查询顺序:** 关于isaaclab的问题，优先查询本地IsaacLab源码，其他资料参考 context7 mcp。
+**反馈增强:** `mcp-feedback-enhanced` 遇到超时和失败时，再一次调用 `mcp-feedback-enhanced`
 
 ## 代码实践
 

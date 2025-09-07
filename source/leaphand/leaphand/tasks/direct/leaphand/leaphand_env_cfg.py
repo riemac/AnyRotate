@@ -103,7 +103,7 @@ class LeaphandEnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/object", # 物体路径 - 使用单独的object路径
         spawn=sim_utils.UsdFileCfg(
             usd_path=object_usd_path,  # 使用单独的物体USD文件
-            scale=(0.8, 0.8, 0.8),  # 缩放比例 - 调整为合适的大小
+            scale=(1.0, 1.0, 1.0),  # 缩放比例 - 调整为合适的大小
             rigid_props=sim_utils.RigidBodyPropertiesCfg(  # 刚体属性配置
                 kinematic_enabled=False,  # 是否启用运动学
                 disable_gravity=False,  # 是否禁用重力

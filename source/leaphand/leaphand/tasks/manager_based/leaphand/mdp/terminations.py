@@ -24,22 +24,31 @@ def object_falling_termination(
     target_pos_offset: tuple[float, float, float] = (0.0, -0.1, 0.56)
 ) -> torch.Tensor:
     """检查物体是否掉落
-    
-    Args:
+
+    Args:@
         env: 环境实例
         object_cfg: 物体资产配置
         fall_dist: 掉落距离阈值
-        target_pos_offset: 目标位置偏移
-        
+        target_pos_offset: 目标位置偏移（相对于每个环境的原点）
+
     Returns:
         物体掉落标志 (num_envs,)
     """
     # 获取物体资产
     object_asset: RigidObject = env.scene[object_cfg.name]
-    
-    # 计算物体与目标位置的距离
+
+    # 获取物体的世界坐标位置
     object_pos = object_asset.data.root_pos_w
-    target_pos = torch.tensor(target_pos_offset, device=env.device).expand(env.num_envs, -1)
+
+    # 计算每个环境的目标位置（相对于环境原点）
+    # 使用场景中的环境原点位置
+    env_origins = env.scene.env_origins
+
+    # 目标位置 = 环境原点 + 偏移
+    target_pos_offset_tensor = torch.tensor(target_pos_offset, device=env.device)
+    target_pos = env_origins + target_pos_offset_tensor.unsqueeze(0).expand(env.num_envs, -1)
+
+    # 计算物体与目标位置的距离
     object_dist = torch.norm(object_pos - target_pos, p=2, dim=-1)
-    
+
     return object_dist >= fall_dist

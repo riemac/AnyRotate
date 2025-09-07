@@ -14,8 +14,8 @@ models:
     clip_actions: False   # 是否裁剪动作值
     clip_log_std: True    # 是否裁剪log标准差
     min_log_std: -20.0    # log标准差最小值
-    max_log_std: 2.0      # log标准差最大值 
-    initial_log_std: 0.0  # log标准差初始值
+    max_log_std: 0      # log标准差最大值 
+    initial_log_std: -1.0  # log标准差初始值
     network:  # 网络结构
       - name: net
         input: STATES     # 输入为状态
@@ -45,12 +45,12 @@ memory:
 agent:
   class: PPO             # 使用PPO算法
   rollouts: 64          # 每次收集32条轨迹
-  learning_epochs: 4    # 每批数据训练8轮
+  learning_epochs: 8    # 每批数据训练8轮
   mini_batches: 8      # 将数据分成8个mini-batch
   discount_factor: 0.99 # 折扣因子γ
   lambda: 0.95         # GAE-Lambda参数
   learning_rate: 2.0e-04 # 学习率
-  learning_rate_scheduler: KLAdaptiveLR  # 使用KL散度自适应学习率
+  learning_rate_scheduler: null  # 使用KL散度自适应学习率
   learning_rate_scheduler_kwargs:
     kl_threshold: 0.008  # KL散度阈值
   state_preprocessor: RunningStandardScaler  # 状态标准化
@@ -64,7 +64,7 @@ agent:
   value_clip: 0.2        # 价值函数裁剪范围
   clip_predicted_values: True  # 是否裁剪预测值
   entropy_loss_scale: 0.01      # 熵正则化系数
-  value_loss_scale: 2.0        # 价值损失系数
+  value_loss_scale: 1.0        # 价值损失系数
   kl_threshold: 0.0            # KL散度阈值
   rewards_shaper_scale: 0.1    # 奖励整形系数
   time_limit_bootstrap: False   # 是否在时间限制时进行bootstrap
@@ -79,5 +79,5 @@ agent:
 # 训练器配置
 trainer:
   class: SequentialTrainer  # 使用顺序训练器
-  timesteps: 480000           # 总训练步数（并行环境累计）
+  timesteps: 360000           # 总训练步数（并行环境累计）
   environment_info: log     # 环境信息记录类型

@@ -92,7 +92,7 @@ def main():
     
     for step in range(100):
         # 生成随机动作
-        actions = torch.randn(env.unwrapped.num_envs, env.unwrapped.action_manager.total_action_dim, device=env.unwrapped.device)
+        actions = torch.randn(env.unwrapped.num_envs, env.action_space.shape[0], device=env.unwrapped.device)
         actions = torch.clamp(actions, -1.0, 1.0)  # 限制动作范围
         
         # 执行动作

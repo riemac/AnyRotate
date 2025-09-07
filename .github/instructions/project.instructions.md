@@ -26,11 +26,9 @@ leaphand/                    # 项目根目录 `Project`
 │       │   └── *.md        # Markdown格式文档
 │       ├── leaphand/       # 核心功能实现 `Module`
 │       │   ├── robots/     # 机器人定义模块
-│       │   │   ├── allegro.py
 │       │   │   └── leaphand.py
 │       │   ├── tasks/       # 任务环境定义 `Task`
 │       │   │   ├── direct/  # DirectRLEnv
-│       │   │   │   ├── allegro_hand/
 │       │   │   │   └── leaphand/
 │       │   │   │       ├── leaphand_env.py # 任务环境实现
 │       │   │   │       └── leaphand_env_cfg.py # 任务环境对应配置
@@ -42,7 +40,7 @@ leaphand/                    # 项目根目录 `Project`
 
 IsaacLab/                    # IsaacLab官方核心框架目录
 
-LEAP_Hand_Isaac_Lab/           # LeapHand手官方的手内旋转项目
+LEAP_Hand_Isaac_Lab/           # LeapHand手官方的手内旋转项目（可参考）
 ```
 
 ## 开发规范
@@ -55,7 +53,6 @@ LEAP_Hand_Isaac_Lab/           # LeapHand手官方的手内旋转项目
 ### 文档管理
 - 所有项目文档统一存放在`source/leaphand/docs/`目录
 - 使用Markdown格式编写文档
-- 文档应包含清晰的标题、章节和必要的示例
 
 ## 注意项
 - **导入路径:** 由于使用了uv pip install -e source/leaphand将Extension注册到python解析路径,导入相关环境和配置时，可按如下示例

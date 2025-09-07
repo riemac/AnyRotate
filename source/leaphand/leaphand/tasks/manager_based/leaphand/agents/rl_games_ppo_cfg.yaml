@@ -3,85 +3,93 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-# RL-Games configuration for LeapHand连续旋转任务
+# RL-Games配置文件 - LeapHand连续旋转任务
 # 基于官方manipulation任务配置，针对连续旋转任务优化
 
 params:
-  seed: 42
+  seed: 42  # 随机种子，保证实验可重复性
 
-  # environment wrapper clipping
+  # 环境包装器裁剪参数
   env:
-    clip_observations: 5.0
-    clip_actions: 1.0
+    clip_observations: 5.0  # 观测值裁剪范围，防止数值过大
+    clip_actions: 1.0      # 动作值裁剪范围，限制动作幅度
 
+  # 算法相关配置
   algo:
-    name: a2c_continuous
+    name: a2c_continuous  # 使用连续动作空间的A2C算法
 
+  # 模型配置
   model:
-    name: continuous_a2c_logstd
+    name: continuous_a2c_logstd  # 使用带有log标准差的连续A2C模型
 
+  # 神经网络结构配置
   network:
-    name: actor_critic
-    separate: True  # 支持非对称Actor-Critic
+    name: actor_critic     # 使用Actor-Critic架构
+    separate: True        # 启用非对称Actor-Critic，Actor和Critic使用独立的网络
     
+    # 连续动作空间配置
     space:
       continuous:
-        mu_activation: None
-        sigma_activation: None
+        mu_activation: None         # 均值输出层不使用激活函数
+        sigma_activation: None      # 标准差输出层不使用激活函数
+
         mu_init:
-          name: default
+          name: default            # 使用默认初始化方法
         sigma_init:
-          name: const_initializer
-          val: 0
-        fixed_sigma: True
+          name: const_initializer  # 标准差使用常数初始化
+          val: 0                  # 初始化值为0
+        fixed_sigma: True         # 使用固定的标准差
     
+    # MLP网络配置
     mlp:
-      units: [512, 512, 256]
-      activation: elu
-      d2rl: False
+      units: [512, 512, 256]  # 三层隐藏层，神经元数量分别为512,512,256
+      activation: elu         # 使用ELU激活函数
+      d2rl: False            # 不使用D2RL架构
       
       initializer:
-        name: default
+        name: default        # 使用默认权重初始化方法
       regularizer:
-        name: None
+        name: None          # 不使用正则化
 
-  load_checkpoint: False # flag which sets whether to load the checkpoint
-  load_path: '' # path to the checkpoint to load
+  # 模型加载配置
+  load_checkpoint: False  # 是否加载检查点
+  load_path: ''          # 检查点加载路径
 
+  # 训练配置
   config:
-    name: leaphand_continuous_rot
-    env_name: rlgpu
-    device: 'cuda:0'
-    device_name: 'cuda:0'
-    multi_gpu: False
-    ppo: True
-    mixed_precision: False
-    normalize_input: True
-    normalize_value: True
-    value_bootstrap: True
-    num_actors: -1  # configured from the script (based on num_envs)
+    name: leaphand_continuous_rot  # 任务名称
+    env_name: rlgpu               # 使用GPU训练环境
+    device: 'cuda:0'              # 使用第一块GPU
+    device_name: 'cuda:0'         # 设备名称
+    multi_gpu: False              # 不使用多GPU训练
+    ppo: True                     # 使用PPO算法
+    mixed_precision: False        # 不使用混合精度训练
+    normalize_input: True         # 对输入进行归一化
+    normalize_value: True         # 对价值进行归一化
+    value_bootstrap: True         # 使用价值引导
+    num_actors: -1               # 并行环境数量，由脚本自动配置
     reward_shaper:
-      scale_value: 1.0
-    normalize_advantage: True
-    gamma: 0.99
-    tau: 0.95
-    learning_rate: 1e-4
-    lr_schedule: adaptive
-    schedule_type: legacy
-    kl_threshold: 0.01
-    score_to_win: 100000000
-    max_epochs: 2000
-    save_best_after: 200
-    save_frequency: 100
-    print_stats: True
-    grad_norm: 1.0
-    entropy_coef: 0.005  # 稍微增加熵系数以鼓励探索
-    truncate_grads: True
-    e_clip: 0.2
-    horizon_length: 24  # 与RSL-RL保持一致
-    minibatch_size: 1536  # 64 envs * 24 horizon = 1536 batch_size
-    mini_epochs: 8
-    critic_coef: 2
-    clip_value: True
-    clip_actions: False
-    bounds_loss_coef: 0.0001
+      scale_value: 1.0           # 奖励缩放因子
+    normalize_advantage: True     # 对优势函数进行归一化
+    gamma: 0.99                  # 折扣因子
+    tau: 0.95                    # GAE-Lambda参数
+    learning_rate: 5e-4          # 学习率
+    lr_schedule: adaptive        # 自适应学习率调整
+    schedule_type: legacy        # 使用传统调度策略
+    kl_threshold: 0.01           # KL散度阈值，控制策略更新幅度
+    score_to_win: 100000          # 获胜分数阈值
+    max_epochs: 5000             # 最大训练轮数
+    save_best_after: 200         # 200轮后开始保存最佳模型
+    save_frequency: 100          # 每100轮保存一次
+    print_stats: True            # 打印训练统计信息
+    grad_norm: 1.0               # 梯度裁剪范数
+    entropy_coef: 0.005          # 熵正则化系数，用于鼓励探索
+    truncate_grads: True         # 启用梯度裁剪
+    e_clip: 0.2                  # PPO裁剪范围
+    horizon_length: 240         # 每horizon_length个step进行一次策略更新
+    minibatch_size: 64           # 增大批量以适应更长的horizon
+    mini_epochs: 8               # 每次更新的迭代次数
+    critic_coef: 2               # Critic损失权重
+    clip_value: True             # 是否裁剪价值估计
+    clip_actions: False          # 是否在训练时裁剪动作
+    bounds_loss_coef: 0.0001     # 动作边界损失系数
