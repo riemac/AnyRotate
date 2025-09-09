@@ -1,22 +1,9 @@
-"""
-课程学习模块 - 为LeapHand连续旋转任务提供课程学习MDP函数
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
 
-该模块提供了各种课程学习函数，可以在环境配置中灵活组合使用：
-1. 动态奖励权重调整
-2. 自适应域随机化 (ADR)
-3. 动态旋转轴复杂度调整
-
-使用方式与Isaac Lab官方风格一致：
-```python
-@configclass
-class CurriculumCfg:
-    grasp_stability_weight = CurrTerm(func=leaphand_mdp.modify_grasp_stability_weight)
-    rotation_axis_complexity = CurrTerm(func=leaphand_mdp.progressive_rotation_axis)
-```
-
-作者: AI Assistant
-日期: 2025-01-05
-"""
+"""LeapHand连续旋转任务的课程学习函数"""
 
 from __future__ import annotations
 

@@ -78,7 +78,7 @@ params:
     schedule_type: legacy        # 使用传统调度策略
     kl_threshold: 0.01           # KL散度阈值，控制策略更新幅度
     score_to_win: 100000          # 获胜分数阈值
-    max_epochs: 5000             # 最大训练轮数
+    max_epochs: 3000             # 最大训练轮数
     save_best_after: 200         # 200轮后开始保存最佳模型
     save_frequency: 100          # 每100轮保存一次
     print_stats: True            # 打印训练统计信息

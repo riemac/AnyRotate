@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING
 
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils.math import quat_conjugate, quat_mul, wrap_to_pi
+from isaaclab.utils.math import quat_conjugate, quat_mul, wrap_to_pi, quat_from_angle_axis
+from isaaclab.markers import VisualizationMarkers
+from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -21,21 +23,31 @@ if TYPE_CHECKING:
 def rotation_velocity_reward(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    visualize_actual_axis: bool = True,
 ) -> torch.Tensor:
     """计算旋转速度奖励
 
     Args:
         env: 环境实例
         asset_cfg: 物体资产配置
+        visualize_actual_axis: 是否可视化实际旋转轴
 
     Returns:
         旋转速度奖励 (num_envs,)
+
+    Note:
+        旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
+        物体旋转时的旋转轴和Body Frame的表示无关
+
+    TODO:
+        - 奖励机制改善
+        - last_object_rot 的初始化改善
     """
     # 获取物体资产
     asset: RigidObject = env.scene[asset_cfg.name]
 
     # 获取当前物体旋转
-    current_object_rot = asset.data.root_quat_w
+    current_object_rot = asset.data.root_quat_w # 固定的世界坐标系
 
     # 初始化last_object_rot如果不存在
     if not hasattr(env, 'last_object_rot'):
@@ -48,9 +60,9 @@ def rotation_velocity_reward(
 
     # 计算旋转轴
     axis = quat_diff[:, 1:4]
-    axis_norm = torch.norm(axis, dim=-1, keepdim=True)
-    valid_rotation = axis_norm.squeeze(-1) > 1e-6
-    axis = torch.where(valid_rotation.unsqueeze(-1), axis / axis_norm, torch.zeros_like(axis))
+    axis_norm = torch.norm(axis, dim=-1, keepdim=True) # 计算旋转轴的范数
+    valid_rotation = axis_norm.squeeze(-1) > 1e-6 #  # 判断是否为有效旋转(范数大于阈值) omega^hat*theta，若物体静止不动，该范式将非常小
+    axis = torch.where(valid_rotation.unsqueeze(-1), axis / axis_norm, torch.zeros_like(axis)) # 对有效旋转进行归一化,无效旋转置零
 
     # 获取目标旋转轴 - 从Command管理器获取
     rotation_axis = env.command_manager.get_command("rotation_axis")
@@ -65,7 +77,99 @@ def rotation_velocity_reward(
     # 奖励正向旋转，轻微惩罚反向旋转
     reward = torch.clamp(projected_velocity, min=-0.1)
 
+    # 可视化实际旋转轴
+    if visualize_actual_axis:
+        _visualize_actual_rotation_axis(env, asset, axis, valid_rotation)
+
     return reward
+
+
+def _visualize_actual_rotation_axis(
+    env: ManagerBasedRLEnv,
+    asset: RigidObject,
+    actual_axis: torch.Tensor,
+    valid_rotation: torch.Tensor,
+):
+    """可视化实际旋转轴
+
+    Args:
+        env: 环境实例
+        asset: 物体资产
+        actual_axis: 实际旋转轴 (num_envs, 3)
+        valid_rotation: 有效旋转掩码 (num_envs,)
+    """
+    # 初始化可视化器（如果不存在）
+    if not hasattr(env, '_actual_axis_visualizer'):
+        # 创建蓝色箭头可视化器
+        marker_cfg = BLUE_ARROW_X_MARKER_CFG.replace(
+            prim_path="/Visuals/Reward/actual_rotation_axis"
+        )
+        # 设置箭头尺寸（与目标轴相同）
+        marker_cfg.markers["arrow"].scale = (0.1, 0.1, 0.3)
+        env._actual_axis_visualizer = VisualizationMarkers(marker_cfg)
+
+    # 只显示有效旋转的箭头
+    valid_env_ids = valid_rotation.nonzero(as_tuple=False).squeeze(-1)
+    if len(valid_env_ids) == 0:
+        return
+
+    # 获取物体位置
+    object_pos_w = asset.data.root_pos_w[valid_env_ids]
+
+    # 计算箭头位置（物体上方，但与目标轴有不同偏移避免重叠）
+    arrow_positions = object_pos_w.clone()
+    arrow_positions[:, 2] += 0.20  # 比目标轴稍高一些（目标轴是0.15）
+
+    # 直接使用实际旋转轴计算箭头方向
+    valid_axes = actual_axis[valid_env_ids]
+    arrow_orientations = _compute_arrow_orientations_from_axis(valid_axes, env.device)
+
+    # 创建marker_indices
+    marker_indices = torch.zeros(len(valid_env_ids), device=env.device, dtype=torch.int32)
+
+    # 更新可视化
+    env._actual_axis_visualizer.visualize(
+        translations=arrow_positions,
+        orientations=arrow_orientations,
+        marker_indices=marker_indices
+    )
+
+
+def _compute_arrow_orientations_from_axis(axis: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """从旋转轴计算箭头方向四元数
+
+    Args:
+        axis: 已归一化的旋转轴向量 (num_envs, 3)
+        device: 设备
+
+    Returns:
+        箭头方向四元数 (num_envs, 4) - (w, x, y, z)
+
+    Note:
+        输入的axis已经在rotation_velocity_reward中被归一化，无需重复归一化
+    """
+    # 箭头默认方向（X轴正方向）
+    default_direction = torch.tensor([1.0, 0.0, 0.0], device=device)
+
+    # 计算旋转轴（叉积）和角度（点积）
+    rotation_axis = torch.cross(default_direction.unsqueeze(0).expand_as(axis), axis, dim=-1)
+    cos_angle = torch.sum(default_direction.unsqueeze(0) * axis, dim=-1)
+
+    # 计算旋转角度
+    angle = torch.acos(torch.clamp(cos_angle, -1.0, 1.0))
+
+    # 处理旋转轴为零的情况（向量平行）
+    rotation_axis_norm = torch.norm(rotation_axis, dim=-1, keepdim=True)
+    rotation_axis = torch.where(
+        rotation_axis_norm > 1e-6,
+        rotation_axis / rotation_axis_norm,
+        torch.tensor([0.0, 0.0, 1.0], device=device).unsqueeze(0).expand_as(rotation_axis)
+    )
+
+    # 使用Isaac Lab官方函数计算四元数
+    orientations = quat_from_angle_axis(angle, rotation_axis)
+
+    return orientations
 
 
 def grasp_reward(

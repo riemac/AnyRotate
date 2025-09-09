@@ -3,7 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""LeapHand连续旋转任务环境配置 - ManagerBasedRLEnv架构"""
+"""LeapHand连续旋转任务环境配置 - ManagerBasedRLEnv架构
+"""
 
 import math
 
@@ -144,21 +145,48 @@ class CommandsCfg:
         resampling_time_range=(1e6, 1e6),  # 不基于时间重采样
         change_rotation_axis_interval=0,  # 不自动更换旋转轴
         rotation_axis_noise=0.05,  # 轻微噪声
-        debug_vis=False,
+        debug_vis=True,  # 启用旋转轴可视化
     )
 
 
 @configclass
 class ActionsCfg:
-    """动作配置 - 手部关节控制"""
+    """动作配置 - 手部关节控制
 
-    hand_joint_pos = mdp.JointPositionToLimitsActionCfg(
+    提供三种动作控制方案，通过注释切换：
+    1. 原始绝对位置控制（会产生抖动）
+    2. EMA指数移动平均平滑控制（推荐）
+    3. 相对位置增量控制（天然平滑）
+    """
+
+    # 方案1：原始绝对位置控制（会产生抖动，仅用于对比）
+    # hand_joint_pos = mdp.JointPositionToLimitsActionCfg(
+    #     asset_name="robot",
+    #     joint_names=["a_.*"],  # 所有手部关节
+    #     scale=1.0,  # 动作缩放因子
+    #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
+    # )
+
+    # # 方案2：EMA指数移动平均平滑控制（推荐 - 类似官方LeapHand的绝对控制+平滑）
+    # hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
+    #     asset_name="robot",
+    #     joint_names=["a_.*"],  # 所有手部关节
+    #     scale=1.0,  # 动作缩放因子
+    #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
+    #     alpha=1/24,  # EMA平滑系数：0.1表示当前动作10%权重，历史90%权重（强平滑）
+    #                 # 参考：官方LeapHand使用 1/24≈0.042 (超强平滑) 或者一开始抖动，后面慢慢平滑？
+    #                 # 建议范围：0.05-0.2，值越小越平滑但响应越慢
+    # )
+
+    # 方案3：相对位置增量控制（天然平滑 - 类似官方LeapHand的相对控制）
+    hand_joint_pos = mdp.RelativeJointPositionActionCfg(
         asset_name="robot",
         joint_names=["a_.*"],  # 所有手部关节
-        scale=1.0,  # 动作缩放因子
-        rescale_to_limits=True,  # 关键！将[-1,1]动作自动映射到关节限制
+        scale=0.1,  # 增量缩放因子：控制每步的最大位置变化量
+                     # 参考：官方LeapHand相对模式使用很小的增量
+                     # 建议范围：0.01-0.1，值越小动作越平滑但学习越慢
+        use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
     )
-
 
 @configclass
 class ObservationsCfg:
@@ -252,13 +280,16 @@ class RewardsCfg:
     rotation_velocity = RewTerm(
         func=leaphand_mdp.rotation_velocity_reward,
         weight=15.0,
-        params={"asset_cfg": SceneEntityCfg("object")},
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "visualize_actual_axis": True,  # 启用实际旋转轴可视化
+        },
     )
 
     # 抓取奖励：保持物体在手中
     grasp_reward = RewTerm(
         func=leaphand_mdp.grasp_reward,
-        weight=8.0,
+        weight=4.0,
         params={"object_cfg": SceneEntityCfg("object")},
     )
 
@@ -479,7 +510,7 @@ class CurriculumCfg:
     progressive_rotation_axis = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "commands.rotation_axis.rotation_axis_mode",
+            "address": "commands.rotation_axis.rotation_axis_mode", # 指向CommandsCfg中的rotation_axis命令项/字段
             "modify_fn": leaphand_mdp.progressive_rotation_axis,
             "modify_params": {
                 "x_axis_step": 0,
@@ -503,7 +534,7 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
 
     # 环境基本参数
     decimation = 4  # 与官方保持一致
-    episode_length_s = 60.0  # 更长的episode以支持连续旋转
+    episode_length_s = 15.0  # 更长的episode以支持连续旋转
 
     # 仿真配置
     sim: SimulationCfg = SimulationCfg(
@@ -546,7 +577,7 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
     ]
 
     # 连续旋转任务特定参数
-    rotation_axis_mode: str = "z_axis"  # "random", "z_axis", "mixed" - 初始模式，课程学习会动态调整
+    rotation_axis_mode: str = "z_axis"  # "random", "z_axis", - 初始模式，课程学习会动态调整
     rotation_axis_noise: float = 0.05
     change_rotation_axis_interval: int = 0  # 0表示不更换
 
@@ -554,8 +585,8 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
     fall_penalty: float = -100.0
     fall_dist: float = 0.12
 
-    # 动作平滑参数
-    act_moving_average: float = 0.85
+    # 动作平滑参数（已弃用 - 现在使用ActionsCfg中的动作平滑配置）
+    # act_moving_average: float = 0.85  # 保留用于兼容性，实际平滑在ActionsCfg中配置
 
     # 历史窗口配置
     history_length: int = 3

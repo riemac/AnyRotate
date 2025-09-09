@@ -53,20 +53,6 @@ def reset_rotation_axis(
         random_axes = torch.randn((len(env_ids), 3), dtype=torch.float, device=env.device)
         random_axes = random_axes / torch.norm(random_axes, dim=-1, keepdim=True)
         env.rotation_axis[env_ids] = random_axes
-    elif rotation_axis_mode == "mixed":
-        # 混合模式：随机选择主轴或混合轴
-        for env_id in env_ids:
-            choice = torch.randint(0, 4, (1,), device=env.device).item()
-            if choice == 0:
-                env.rotation_axis[env_id] = torch.tensor([1, 0, 0], dtype=torch.float, device=env.device)
-            elif choice == 1:
-                env.rotation_axis[env_id] = torch.tensor([0, 1, 0], dtype=torch.float, device=env.device)
-            elif choice == 2:
-                env.rotation_axis[env_id] = torch.tensor([0, 0, 1], dtype=torch.float, device=env.device)
-            else:
-                # 随机混合轴
-                random_axis = torch.randn(3, dtype=torch.float, device=env.device)
-                env.rotation_axis[env_id] = random_axis / torch.norm(random_axis)
     
     # 添加噪声
     if rotation_axis_noise > 0:

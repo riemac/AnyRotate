@@ -44,11 +44,13 @@ LEAP_Hand_Isaac_Lab/           # LeapHand手官方的手内旋转项目（可参
 ## 开发规范
 
 ### 测试脚本
+一般的测试可用项目自带的train.py，若编写自己的测试脚本，应:
 - 遵循standalone开发模式，使用appLauncher作为核心启动器
 - 所有测试脚本统一放置在`scripts/`目录下
 - 注意：某些依赖库需要IsaacSim环境启动后才能正常导入
 
 ### 文档管理
+若编写记录或说明稳定，应:
 - 所有项目文档统一存放在`source/leaphand/docs/`目录
 - 使用Markdown格式编写文档
 
@@ -59,3 +61,5 @@ from leaphand.tasks.direct.leaphand.leaphand_env import LeaphandEnv
 from leaphand.tasks.direct.leaphand.leaphand_env_cfg import LeaphandEnvCfg
 ```
 - **环境激活:** 执行终端指令前一定要在 `~/isaac` 目录下激活 uv 环境: `source .venv/bin/activate`
+
+- **环境原点偏置:** 在多环境并行训练时，每个环境实例都有自己的原点偏置(env_origins)。开发环境或智能体时需要考虑这个偏置对位置、姿态等计算的影响，确保正确处理相对/绝对坐标转换。

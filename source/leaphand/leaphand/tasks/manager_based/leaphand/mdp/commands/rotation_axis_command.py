@@ -13,8 +13,12 @@ from __future__ import annotations
 import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
+import weakref
 
 from isaaclab.managers import CommandTerm
+from isaaclab.markers import VisualizationMarkers
+import isaaclab.utils.math as math_utils
+from isaaclab.utils.math import quat_from_angle_axis
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -33,7 +37,6 @@ class RotationAxisCommand(CommandTerm):
     - "x_axis": 固定X轴旋转  
     - "y_axis": 固定Y轴旋转
     - "random": 随机轴选择
-    - "mixed": 混合模式（包含课程学习）
 
     与基于时间重采样的典型命令项不同，该命令项可以配置为基于课程进度
     或固定间隔进行重采样。
@@ -67,6 +70,14 @@ class RotationAxisCommand(CommandTerm):
         # 初始化旋转轴
         self._resample_command(torch.arange(self.num_envs, device=self.device))
 
+        # 可视化相关
+        self._is_visualizing = False
+        self._debug_vis_handle = None
+
+        # 如果配置了debug_vis，则启用可视化
+        if self.cfg.debug_vis:
+            self.set_debug_vis(True)
+
     def __str__(self) -> str:
         """返回命令项的字符串表示。"""
         msg = "RotationAxisCommand:\n"
@@ -95,7 +106,7 @@ class RotationAxisCommand(CommandTerm):
         self.metrics["rotation_axis_y"][:] = self.rotation_axis_command[:, 1]
         self.metrics["rotation_axis_z"][:] = self.rotation_axis_command[:, 2]
 
-    def _resample_command(self, env_ids: Sequence[int]):
+    def _resample_command(self, env_ids: Sequence[int]): # 生成新的任务目标，保持训练多样性
         """为指定环境重采样旋转轴命令。
         
         Args:
@@ -121,9 +132,7 @@ class RotationAxisCommand(CommandTerm):
         elif current_mode == "random":
             # 随机轴选择
             self._sample_random_axis(env_ids)
-        elif current_mode == "mixed":
-            # 混合模式
-            self._sample_mixed_axis(env_ids)
+
         else:
             # 默认使用Z轴
             self.rotation_axis_command[env_ids] = torch.tensor([0.0, 0.0, 1.0], device=self.device)
@@ -159,27 +168,7 @@ class RotationAxisCommand(CommandTerm):
         random_vecs = random_vecs / torch.norm(random_vecs, dim=-1, keepdim=True)
         self.rotation_axis_command[env_ids] = random_vecs
 
-    def _sample_mixed_axis(self, env_ids: Sequence[int]):
-        """采样混合旋转轴（固定轴和随机轴的组合）。"""
-        # 25%概率选择每个主要轴，25%概率选择随机轴
-        choices = torch.randint(0, 4, (len(env_ids),), device=self.device)
-        
-        for i, env_id in enumerate(env_ids):
-            choice = choices[i].item()
-            if choice == 0:
-                # X轴
-                self.rotation_axis_command[env_id] = torch.tensor([1.0, 0.0, 0.0], device=self.device)
-            elif choice == 1:
-                # Y轴
-                self.rotation_axis_command[env_id] = torch.tensor([0.0, 1.0, 0.0], device=self.device)
-            elif choice == 2:
-                # Z轴
-                self.rotation_axis_command[env_id] = torch.tensor([0.0, 0.0, 1.0], device=self.device)
-            else:
-                # 随机轴
-                random_vec = torch.randn(3, device=self.device)
-                random_vec = random_vec / torch.norm(random_vec)
-                self.rotation_axis_command[env_id] = random_vec
+
 
     def _add_axis_noise(self, env_ids: Sequence[int]):
         """向旋转轴添加噪声并重新归一化。"""
@@ -192,4 +181,150 @@ class RotationAxisCommand(CommandTerm):
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         """设置旋转轴命令的调试可视化。"""
-        raise NotImplementedError(f"Debug visualization is not implemented for {self.__class__.__name__}.")
+        # 检查是否启用可视化
+        if not self.cfg.visualizer_cfg.enabled:
+            return
+
+        # 设置可视化标记器的可见性
+        if debug_vis:
+            if not hasattr(self, "rotation_axis_visualizer"):
+                # 使用配置文件中定义的可视化配置
+                self.rotation_axis_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg.marker_cfg)
+            # 设置可见性为真
+            self.rotation_axis_visualizer.set_visibility(True)
+        else:
+            if hasattr(self, "rotation_axis_visualizer"):
+                self.rotation_axis_visualizer.set_visibility(False)
+
+    def _debug_vis_callback(self, event):
+        """旋转轴可视化回调函数。
+
+        为每个环境显示旋转轴箭头，箭头位置跟随物体并正确处理env_origins偏移，
+        箭头方向指向各自环境的旋转轴方向。
+        """
+        # 检查是否有可视化器
+        if not hasattr(self, "rotation_axis_visualizer"):
+            return
+
+        # 获取物体位置（假设物体在场景中的名称为"object"）
+        try:
+            # 从环境中获取物体位置
+            object_asset = self._env.scene["object"]
+            object_pos_w = object_asset.data.root_pos_w
+
+            # 计算箭头位置（物体上方，便于观察）
+            # object_pos_w已经包含了env_origins偏移，所以直接使用即可
+            arrow_positions = object_pos_w.clone()
+            arrow_positions[:, 2] += self.cfg.visualizer_cfg.offset_above_object
+
+            # 计算箭头方向（基于每个环境的旋转轴方向）
+            arrow_orientations = self._compute_arrow_orientations()
+
+            # 创建marker_indices - 参考官方示例
+            # 所有箭头都使用同一个原型（索引0）
+            all_envs = torch.arange(self.num_envs, device=self.device)
+            marker_indices = torch.zeros_like(all_envs)
+
+            # 更新可视化 - 为每个环境显示一个箭头
+            # 参考官方示例的调用方式
+            self.rotation_axis_visualizer.visualize(
+                translations=arrow_positions,
+                orientations=arrow_orientations,
+                marker_indices=marker_indices
+            )
+        except Exception:
+            # 如果获取物体位置失败，则不显示可视化
+            pass
+
+    def _compute_arrow_orientations(self) -> torch.Tensor:
+        """计算箭头的方向四元数。
+
+        箭头默认指向X轴正方向，需要旋转到旋转轴方向。
+        遵循右手螺旋定则：拇指指向旋转轴正方向，其余手指弯曲方向为正旋转方向。
+
+        Returns:
+            形状为 (num_envs, 4) 的四元数张量 (w, x, y, z)
+        """
+        # 箭头默认方向（X轴正方向）
+        default_direction = torch.tensor([1.0, 0.0, 0.0], device=self.device)
+
+        # 目标方向（旋转轴方向）
+        target_directions = self.rotation_axis_command
+
+        # 使用更简化的方法计算箭头方向
+        orientations = self._compute_arrow_orientations_optimized(target_directions)
+
+        return orientations
+
+    def _compute_arrow_orientations_optimized(self, target_directions: torch.Tensor) -> torch.Tensor:
+        """优化的箭头方向计算方法
+
+        Args:
+            target_directions: 目标方向向量 (num_envs, 3)
+
+        Returns:
+            旋转四元数 (num_envs, 4) - (w, x, y, z)
+        """
+        # 箭头默认方向（X轴正方向）
+        default_direction = torch.tensor([1.0, 0.0, 0.0], device=self.device)
+
+        # 归一化目标方向
+        target_norm = torch.norm(target_directions, dim=-1, keepdim=True)
+        target_normalized = torch.where(target_norm > 1e-6, target_directions / target_norm, default_direction.unsqueeze(0))
+
+        # 计算旋转轴（叉积）和角度（点积）
+        rotation_axis = torch.cross(default_direction.unsqueeze(0).expand_as(target_normalized), target_normalized, dim=-1)
+        cos_angle = torch.sum(default_direction.unsqueeze(0) * target_normalized, dim=-1)
+
+        # 计算旋转角度
+        angle = torch.acos(torch.clamp(cos_angle, -1.0, 1.0))
+
+        # 处理旋转轴为零的情况（向量平行）
+        rotation_axis_norm = torch.norm(rotation_axis, dim=-1, keepdim=True)
+        rotation_axis = torch.where(
+            rotation_axis_norm > 1e-6,
+            rotation_axis / rotation_axis_norm,
+            torch.tensor([0.0, 0.0, 1.0], device=self.device).unsqueeze(0).expand_as(rotation_axis)
+        )
+
+        # 使用Isaac Lab官方函数计算四元数
+        orientations = quat_from_angle_axis(angle, rotation_axis)
+
+        return orientations
+
+    @property
+    def has_debug_vis_implementation(self) -> bool:
+        """检查是否实现了调试可视化。"""
+        return True
+
+    def set_debug_vis(self, debug_vis: bool) -> bool:
+        """设置调试可视化状态。
+
+        Args:
+            debug_vis: 是否启用调试可视化。
+
+        Returns:
+            是否成功设置调试可视化。
+        """
+        # 检查是否支持调试可视化
+        if not self.has_debug_vis_implementation:
+            return False
+        # 切换调试可视化对象
+        self._set_debug_vis_impl(debug_vis)
+        # 切换调试可视化标志
+        self._is_visualizing = debug_vis
+        # 切换调试可视化句柄
+        if debug_vis:
+            # 如果不存在，则为post update事件创建订阅者
+            if self._debug_vis_handle is None:
+                import omni.kit.app
+                app_interface = omni.kit.app.get_app_interface()
+                self._debug_vis_handle = app_interface.get_post_update_event_stream().create_subscription_to_pop(
+                    lambda event, obj=weakref.proxy(self): obj._debug_vis_callback(event)
+                )
+        else:
+            # 移除调试可视化句柄
+            if self._debug_vis_handle is not None:
+                self._debug_vis_handle.unsubscribe()
+                self._debug_vis_handle = None
+        return True
