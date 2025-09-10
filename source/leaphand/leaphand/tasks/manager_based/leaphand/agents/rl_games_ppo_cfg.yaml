@@ -78,9 +78,9 @@ params:
     schedule_type: legacy        # 使用传统调度策略
     kl_threshold: 0.01           # KL散度阈值，控制策略更新幅度
     score_to_win: 100000          # 获胜分数阈值
-    max_epochs: 3000             # 最大训练轮数
-    save_best_after: 200         # 200轮后开始保存最佳模型
-    save_frequency: 100          # 每100轮保存一次
+    max_epochs: 1000             # 最大训练轮数（采集数据->更新模型的完整流程）
+    save_best_after: 100         # 100轮后开始保存最佳模型
+    save_frequency: 50          # 每50轮保存一次
     print_stats: True            # 打印训练统计信息
     grad_norm: 1.0               # 梯度裁剪范数
     entropy_coef: 0.005          # 熵正则化系数，用于鼓励探索
@@ -88,7 +88,7 @@ params:
     e_clip: 0.2                  # PPO裁剪范围
     horizon_length: 240         # 每horizon_length个step进行一次策略更新
     minibatch_size: 64           # 增大批量以适应更长的horizon
-    mini_epochs: 8               # 每次更新的迭代次数
+    mini_epochs: 8               # 每次更新的迭代次数（采集数据的循环利用次数）
     critic_coef: 2               # Critic损失权重
     clip_value: True             # 是否裁剪价值估计
     clip_actions: False          # 是否在训练时裁剪动作

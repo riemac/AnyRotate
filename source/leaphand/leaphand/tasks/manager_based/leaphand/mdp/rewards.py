@@ -24,13 +24,17 @@ def rotation_velocity_reward(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     visualize_actual_axis: bool = True,
+    target_angular_speed: float = 1.5,
+    decay_factor: float = 5.0,
 ) -> torch.Tensor:
-    """计算旋转速度奖励
+    """计算旋转速度奖励 - 目标是达到指定的角速度而非越快越好
 
     Args:
         env: 环境实例
         asset_cfg: 物体资产配置
         visualize_actual_axis: 是否可视化实际旋转轴
+        target_angular_speed: 目标角速度大小 (rad/s)
+        decay_factor: 指数衰减因子
 
     Returns:
         旋转速度奖励 (num_envs,)
@@ -39,9 +43,7 @@ def rotation_velocity_reward(
         旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
         物体旋转时的旋转轴和Body Frame的表示无关
 
-    TODO:
-        - 奖励机制改善
-        - last_object_rot 的初始化改善
+        奖励公式：R = exp(-decay_factor * |projected_velocity - target_angular_speed|)
     """
     # 获取物体资产
     asset: RigidObject = env.scene[asset_cfg.name]
@@ -74,8 +76,9 @@ def rotation_velocity_reward(
     # 更新上一帧旋转
     env.last_object_rot[:] = current_object_rot.clone()
 
-    # 奖励正向旋转，轻微惩罚反向旋转
-    reward = torch.clamp(projected_velocity, min=-0.1)
+    # 计算目标角速度奖励 - 使用指数衰减型奖励
+    speed_error = torch.abs(projected_velocity - target_angular_speed) # 目标是让projected_velocity（带方向）接近target_angular_speed
+    reward = torch.exp(-decay_factor * speed_error)
 
     # 可视化实际旋转轴
     if visualize_actual_axis:
@@ -172,6 +175,129 @@ def _compute_arrow_orientations_from_axis(axis: torch.Tensor, device: torch.devi
     return orientations
 
 
+def fingertip_distance_penalty(
+    env: ManagerBasedRLEnv,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """计算指尖到物体中心距离的惩罚 - 鼓励指尖接近物体
+
+    Args:
+        env: 环境实例
+        object_cfg: 物体资产配置
+        robot_cfg: 机器人资产配置
+
+    Returns:
+        指尖距离惩罚 (num_envs,)
+        
+    Note:
+        奖励公式：R = mean(||fingertip_pos - object_pos||_2)
+        其中fingertip_pos是每个指尖的世界坐标位置，object_pos是物体质心的世界坐标位置
+        使用平均距离而不是最小距离可以让所有手指都参与抓取，避免部分手指不操作
+    """
+    # 获取物体资产
+    object_asset: RigidObject = env.scene[object_cfg.name]
+    robot_asset: Articulation = env.scene[robot_cfg.name]
+
+    # 获取物体质量中心位置
+    object_pos_w = object_asset.data.root_pos_w
+
+    # LeapHand指尖body名称（基于实际的body_names输出）
+    fingertip_body_names = [
+        "fingertip",         # 食指指尖
+        "thumb_fingertip",   # 拇指指尖
+        "fingertip_2",       # 中指指尖
+        "fingertip_3"        # 无名指指尖
+    ]
+
+    # 获取所有指尖的位置
+    fingertip_distances = []
+    
+    for body_name in fingertip_body_names:
+        # 获取指尖body的世界坐标位置
+        body_indices, _ = robot_asset.find_bodies(body_name)
+        # 若无匹配，直接抛出异常
+        if len(body_indices) == 0:
+            raise IndexError(f"Body not found: {body_name}")
+        # 使用第一个匹配到的索引（Python int）
+        body_idx = int(body_indices[0])
+        fingertip_pos_w = robot_asset.data.body_pos_w[:, body_idx]
+        
+        # 计算指尖到物体中心的距离
+        distance = torch.norm(fingertip_pos_w - object_pos_w, p=2, dim=-1)
+        fingertip_distances.append(distance)
+
+    # 将所有指尖距离堆叠为张量 (num_envs, num_fingertips)
+    fingertip_distances_tensor = torch.stack(fingertip_distances, dim=-1)
+    # 计算最小距离（最接近物体的指尖）或平均距离（更平滑）
+    # min_distance = torch.min(fingertip_distances_tensor, dim=-1)[0]
+    distance = torch.mean(fingertip_distances_tensor, dim=-1)
+    # 返回形状 (num_envs,)
+    return distance
+
+
+def rotation_axis_alignment_reward(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    theta_tolerance: float = 0.1,
+    decay_factor: float = 5.0,
+) -> torch.Tensor:
+    """计算旋转轴容忍差奖励 - 指数衰减型奖励
+
+    Args:
+        env: 环境实例
+        asset_cfg: 物体资产配置
+        theta_tolerance: 角度容忍度 (弧度)
+        decay_factor: 指数衰减因子
+
+    Returns:
+        旋转轴对齐奖励 (num_envs,)
+
+    Note:
+        奖励公式：R_axis = weight * exp(-decay_factor * max(0, theta - theta_tolerance))
+        其中theta是实际旋转轴与目标旋转轴之间的夹角
+    """
+    # 获取物体资产
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # 获取当前物体旋转
+    current_object_rot = asset.data.root_quat_w
+
+    # 初始化独立的last_object_rot状态（避免与rotation_velocity_reward冲突）
+    if not hasattr(env, 'last_object_rot_alignment'):
+        env.last_object_rot_alignment = torch.zeros((env.num_envs, 4), dtype=torch.float, device=env.device)
+        env.last_object_rot_alignment[:, 0] = 1.0  # 初始化为单位四元数
+
+    # 计算旋转差异
+    quat_diff = quat_mul(current_object_rot, quat_conjugate(env.last_object_rot_alignment))
+
+    # 计算实际旋转轴
+    axis = quat_diff[:, 1:4]
+    axis_norm = torch.norm(axis, dim=-1, keepdim=True)
+    valid_rotation = axis_norm.squeeze(-1) > 1e-6
+    axis = torch.where(valid_rotation.unsqueeze(-1), axis / axis_norm, torch.zeros_like(axis))
+
+    # 获取目标旋转轴
+    target_axis = env.command_manager.get_command("rotation_axis")
+
+    # 计算实际旋转轴与目标旋转轴之间的夹角
+    # 使用点积计算夹角：cos(theta) = a·b / (|a||b|)
+    dot_product = torch.sum(axis * target_axis, dim=-1)
+    # 限制点积值在[-1, 1]范围内，避免数值误差
+    dot_product = torch.clamp(dot_product, -1.0, 1.0)
+    # 计算夹角（取绝对值，因为我们关心的是对齐程度）
+    theta = torch.acos(torch.abs(dot_product))
+
+    # 计算指数衰减奖励
+    angle_error = torch.clamp(theta - theta_tolerance, min=0.0)
+    reward = torch.exp(-decay_factor * angle_error)
+
+    # 更新上一帧旋转（独立状态）
+    env.last_object_rot_alignment[:] = current_object_rot.clone()
+
+    return reward
+
+
 def grasp_reward(
     env: ManagerBasedRLEnv,
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
@@ -208,40 +334,32 @@ def grasp_reward(
     return reward
 
 
-def stability_reward(
+def unstable_penalty(
     env: ManagerBasedRLEnv,
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
 ) -> torch.Tensor:
-    """计算稳定性奖励 - 减少不必要的震荡
+    """计算稳定性惩罚 - 减少不必要的震荡
 
     Args:
         env: 环境实例
         object_cfg: 物体资产配置
 
     Returns:
-        稳定性奖励 (num_envs,)
+        稳定性惩罚 (num_envs,)，实际为负的惩罚项
+        
+    Note:
+        奖励公式：R = weight * ||v||_2
+        其中v是物体的线速度向量，使用L2范数计算速度大小
+        weight是负号，表示这是一个惩罚项，速度越大惩罚越大
     """
     # 获取物体资产
     object_asset: RigidObject = env.scene[object_cfg.name]
 
-    # 基于物体线速度的稳定性奖励
+    # 基于物体线速度的稳定性惩罚
     object_lin_vel = object_asset.data.root_lin_vel_w
-    lin_vel_penalty = torch.norm(object_lin_vel, p=2, dim=-1)
+    penalty = torch.norm(object_lin_vel, p=2, dim=-1)
 
-    # 指数衰减奖励
-    reward = torch.exp(-2.0 * lin_vel_penalty)
-
-    return reward
-
-
-def joint_pos_target_l2(env: ManagerBasedRLEnv, target: float, asset_cfg: SceneEntityCfg) -> torch.Tensor:
-    """Penalize joint position deviation from a target value."""
-    # extract the used quantities (to enable type-hinting)
-    asset: Articulation = env.scene[asset_cfg.name]
-    # wrap the joint positions to (-pi, pi)
-    joint_pos = wrap_to_pi(asset.data.joint_pos[:, asset_cfg.joint_ids])
-    # compute the reward
-    return torch.sum(torch.square(joint_pos - target), dim=1)
+    return penalty
 
 
 def fall_penalty(

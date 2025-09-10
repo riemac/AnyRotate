@@ -3,7 +3,9 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""LeapHand连续旋转任务的课程学习函数"""
+"""LeapHand连续旋转任务的课程学习函数
+里面的步数指的是全局步数，所有环境累计交互的次数
+"""
 
 from __future__ import annotations
 
@@ -20,18 +22,18 @@ if TYPE_CHECKING:
 # 奖励权重调整课程学习函数
 # ============================================================================
 
-def modify_grasp_stability_weight(
+def modify_rotation_velocity_weight(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
-    term_name: str = "grasp_stability",
-    early_weight: float = 2.0,
-    mid_weight: float = 1.5,
-    late_weight: float = 1.0,
-    mid_step: int = 500_000,
-    late_step: int = 1_000_000
+    term_name: str = "rotation_velocity_reward",
+    early_weight: float = 10.0,
+    mid_weight: float = 15.0,
+    late_weight: float = 20.0,
+    mid_step: int = 300_000,
+    late_step: int = 800_000
 ) -> float:
     """
-    抓取稳定性奖励权重调整 - 训练初期高权重，后期逐步降低
+    旋转速度奖励权重调整 - 训练初期低权重，后期逐步提高
 
     Args:
         env: 环境实例
@@ -56,18 +58,18 @@ def modify_grasp_stability_weight(
         return early_weight
 
 
-def modify_rotation_velocity_weight(
+def modify_rotation_axis_alignment_weight(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
-    term_name: str = "rotation_velocity_reward",
-    early_weight: float = 10.0,
-    mid_weight: float = 15.0,
-    late_weight: float = 20.0,
+    term_name: str = "rotation_axis_alignment_reward",
+    early_weight: float = 1.0,
+    mid_weight: float = 0.5,
+    late_weight: float = 0.1,
     mid_step: int = 300_000,
     late_step: int = 800_000
 ) -> float:
     """
-    旋转速度奖励权重调整 - 训练初期低权重，后期逐步提高
+    旋转轴对齐奖励权重调整 - 训练初期高权重，后期逐步降低
 
     Args:
         env: 环境实例
@@ -264,48 +266,12 @@ def object_scale_adr(
 # 旋转轴复杂度课程学习函数
 # ============================================================================
 
-def progressive_rotation_axis(
-    env: ManagerBasedRLEnv,
-    env_ids: Sequence[int],
-    old_value: str,
-    x_axis_step: int = 0,
-    y_axis_step: int = 400_000,
-    z_axis_step: int = 800_000,
-    random_axis_step: int = 1_200_000
-) -> str:
-    """
-    渐进式旋转轴复杂度调整：X轴 → Y轴 → Z轴 → 任意轴
-
-    Args:
-        env: 环境实例
-        env_ids: 环境ID列表
-        old_value: 当前旋转轴模式
-        x_axis_step: X轴阶段开始步数
-        y_axis_step: Y轴阶段开始步数
-        z_axis_step: Z轴阶段开始步数
-        random_axis_step: 任意轴阶段开始步数
-
-    Returns:
-        新的旋转轴模式
-    """
-    current_step = env.common_step_counter
-
-    if current_step >= random_axis_step:
-        return "random"
-    elif current_step >= z_axis_step:
-        return "z_axis"
-    elif current_step >= y_axis_step:
-        return "y_axis"
-    else:
-        return "x_axis"
-
-
 def simple_rotation_axis(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
     old_value: str,
     z_axis_step: int = 0,
-    random_axis_step: int = 1_000_000
+    random_axis_step: int = 1_200_000
 ) -> str:
     """
     简化旋转轴复杂度调整：Z轴 → 任意轴
@@ -327,37 +293,3 @@ def simple_rotation_axis(
     else:
         return "z_axis"
 
-
-def custom_rotation_axis(
-    env: ManagerBasedRLEnv,
-    env_ids: Sequence[int],
-    old_value: str,
-    axis_schedule: dict[int, str]
-) -> str:
-    """
-    自定义旋转轴复杂度调整
-
-    Args:
-        env: 环境实例
-        env_ids: 环境ID列表
-        old_value: 当前旋转轴模式
-        axis_schedule: 步数到轴模式的映射字典，例如：
-                      {0: "x_axis", 500000: "y_axis", 1000000: "random"}
-
-    Returns:
-        新的旋转轴模式
-    """
-    current_step = env.common_step_counter
-
-    # 找到当前步数对应的轴模式
-    applicable_steps = [step for step in axis_schedule.keys() if step <= current_step]
-    if applicable_steps:
-        latest_step = max(applicable_steps)
-        return axis_schedule[latest_step]
-
-    # 如果没有找到适用的步数，返回第一个轴模式
-    if axis_schedule:
-        first_step = min(axis_schedule.keys())
-        return axis_schedule[first_step]
-
-    return mdp.modify_term_cfg.NO_CHANGE

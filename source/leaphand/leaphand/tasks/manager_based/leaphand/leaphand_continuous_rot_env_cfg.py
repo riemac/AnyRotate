@@ -32,6 +32,10 @@ from leaphand.robots.leap import LEAP_HAND_CFG
 from . import mdp as leaphand_mdp
 from .mdp.commands import RotationAxisCommandCfg
 
+# 全局超参数(来源于rl_games_ppo_cfg.yaml)
+num_envs = 100
+horizon_length = 240
+
 # 使用Isaac Lab内置的cube资产
 object_usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"
 
@@ -276,40 +280,70 @@ class ObservationsCfg:
 class RewardsCfg:
     """奖励配置 - 连续旋转任务奖励机制"""
 
-    # 主要奖励：旋转速度奖励
+    # 主要奖励：旋转速度奖励 - 目标角速度型
     rotation_velocity = RewTerm(
         func=leaphand_mdp.rotation_velocity_reward,
         weight=15.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "visualize_actual_axis": True,  # 启用实际旋转轴可视化
+            "target_angular_speed": 1.5,   # 目标角速度 (rad/s)
+            "decay_factor": 3.0,           # 指数衰减因子
+        },
+    )
+
+    # 旋转轴对齐奖励：鼓励实际旋转轴与目标旋转轴对齐
+    rotation_axis_alignment = RewTerm(
+        func=leaphand_mdp.rotation_axis_alignment_reward,
+        weight=10.0,
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "theta_tolerance": 15/180*math.pi,  # 角度容忍度 (弧度)
+            "decay_factor": 5.0,     # 指数衰减因子
         },
     )
 
     # 抓取奖励：保持物体在手中
-    grasp_reward = RewTerm(
-        func=leaphand_mdp.grasp_reward,
-        weight=4.0,
-        params={"object_cfg": SceneEntityCfg("object")},
-    )
+    # grasp_reward = RewTerm(
+    #     func=leaphand_mdp.grasp_reward,
+    #     weight=4.0,
+    #     params={"object_cfg": SceneEntityCfg("object")},
+    # )
 
-    # 稳定性奖励：减少不必要的震荡
-    stability_reward = RewTerm(
-        func=leaphand_mdp.stability_reward,
-        weight=3.0,
+    # 稳定性惩罚：减少不必要的震荡
+    unstable_penalty = RewTerm(
+        func=leaphand_mdp.unstable_penalty,
+        weight=-1.0,
         params={"object_cfg": SceneEntityCfg("object")},
     )
 
     # 动作惩罚：鼓励平滑动作
     action_penalty = RewTerm(
         func=mdp.action_rate_l2,
-        weight=-0.0005,
+        weight=-0.1,
     )
 
     # 姿态偏差惩罚：鼓励保持接近人手的自然姿态
     pose_diff_penalty = RewTerm(
         func=leaphand_mdp.pose_diff_penalty,
-        weight=-0.01,
+        weight=-1,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+
+    # 指尖距离惩罚：鼓励机器人靠近物体中心
+    fingertip_distance_penalty = RewTerm(
+        func=leaphand_mdp.fingertip_distance_penalty,
+        weight=-100.0,
+        params={
+            "object_cfg": SceneEntityCfg("object"),
+            "robot_cfg": SceneEntityCfg("robot"),
+        },
+    )
+
+    # 扭矩惩罚：鼓励使用较小的关节扭矩
+    torque_penalty = RewTerm(
+        func=mdp.joint_torques_l2,
+        weight=-1,
         params={"asset_cfg": SceneEntityCfg("robot")},
     )
 
@@ -420,27 +454,48 @@ class CurriculumCfg:
     """课程学习配置 - 提供各种课程学习策略"""
 
     # 奖励权重调整课程学习
-    grasp_stability_weight = CurrTerm(
-        func=leaphand_mdp.modify_grasp_stability_weight,
-        params={
-            "term_name": "grasp_stability",
-            "early_weight": 2.0,
-            "mid_weight": 1.5,
-            "late_weight": 1.0,
-            "mid_step": 500_000,
-            "late_step": 1_000_000
-        }
-    )
+    # grasp_stability_weight = CurrTerm(
+    #     func=leaphand_mdp.modify_grasp_stability_weight,
+    #     params={
+    #         "term_name": "grasp_stability",
+    #         "early_weight": 2.0,
+    #         "mid_weight": 1.5,
+    #         "late_weight": 1.0,
+    #         "mid_step": 500_000,
+    #         "late_step": 1_000_000
+    #     }
+    # )
 
     rotation_velocity_weight = CurrTerm(
         func=leaphand_mdp.modify_rotation_velocity_weight,
         params={
             "term_name": "rotation_velocity_reward",
             "early_weight": 10.0,
-            "mid_weight": 15.0,
-            "late_weight": 20.0,
-            "mid_step": 300_000,
-            "late_step": 800_000
+            "mid_weight": 20.0,
+            "late_weight": 40.0,
+            "mid_step": 20*horizon_length*num_envs,
+            "late_step": 100*horizon_length*num_envs
+        }
+    )
+
+    rotation_axis_alignment_weight = CurrTerm(
+        func=leaphand_mdp.modify_rotation_axis_alignment_weight,
+        params={
+            "term_name": "rotation_axis_alignment_reward",
+            "early_weight": 10.0,
+            "mid_weight": 20.0,
+            "late_weight": 40.0,
+            "mid_step": 20*horizon_length*num_envs,
+            "late_step": 100*horizon_length*num_envs
+        }
+    )
+    
+    fingertip_distance_penalty_weight = CurrTerm(
+        func=mdp.modify_reward_weight,
+        params={
+            "term_name": "fingertip_distance_penalty",
+            "weight": -20.0,
+            "num_steps": 100*horizon_length*num_envs
         }
     )
 
@@ -448,78 +503,86 @@ class CurriculumCfg:
         func=leaphand_mdp.modify_fall_penalty_weight,
         params={
             "term_name": "fall_penalty",
-            "early_weight": -50.0,
+            "early_weight": -200.0,
             "mid_weight": -100.0,
-            "late_weight": -150.0,
-            "mid_step": 600_000,
-            "late_step": 1_200_000
+            "late_weight": -50.0,
+            "mid_step": 20*horizon_length*num_envs,
+            "late_step": 100*horizon_length*num_envs
         }
     )
 
-    # 姿态偏差惩罚权重调整 - 训练初期较轻，后期加重
+    action_penalty_weight = CurrTerm(
+        func=mdp.modify_reward_weight,
+        params={
+            "term_name": "action_penalty",
+            "weight": -1, # 后期加大动作惩罚
+            "num_steps": 200*horizon_length*num_envs
+        }
+    )
+
+    # 姿态偏差惩罚权重调整 - 训练初期重，后期变轻
     pose_diff_penalty_weight = CurrTerm(
-        func=leaphand_mdp.modify_reward_weight,
+        func=mdp.modify_reward_weight,
         params={
             "term_name": "pose_diff_penalty",
-            "weight": -0.02,  # 后期加重姿态约束
-            "num_steps": 800_000
+            "weight": -0.2,  # 后期减轻姿态约束
+            "num_steps": 200*horizon_length*num_envs
         }
     )
+
 
     # 自适应域随机化课程学习
-    object_mass_adr = CurrTerm(
-        func=mdp.modify_env_param,
-        params={
-            "address": "events.object_scale_mass.params.mass_distribution_params",
-            "modify_fn": leaphand_mdp.object_mass_adr,
-            "modify_params": {
-                "enable_step": 600_000,
-                "max_strength_step": 1_200_000,
-                "max_variation": 0.5
-            }
-        }
-    )
+    # object_mass_adr = CurrTerm(
+    #     func=mdp.modify_env_param,
+    #     params={
+    #         "address": "events.object_scale_mass.params.mass_distribution_params",
+    #         "modify_fn": leaphand_mdp.object_mass_adr,
+    #         "modify_params": {
+    #             "enable_step": 600_000,
+    #             "max_strength_step": 1_200_000,
+    #             "max_variation": 0.5
+    #         }
+    #     }
+    # )
 
-    friction_adr = CurrTerm(
-        func=mdp.modify_env_param,
-        params={
-            "address": "events.object_physics_material.params.static_friction_range",
-            "modify_fn": leaphand_mdp.friction_adr,
-            "modify_params": {
-                "enable_step": 800_000,
-                "max_strength_step": 1_500_000,
-                "max_variation": 0.3
-            }
-        }
-    )
+    # friction_adr = CurrTerm(
+    #     func=mdp.modify_env_param,
+    #     params={
+    #         "address": "events.object_physics_material.params.static_friction_range",
+    #         "modify_fn": leaphand_mdp.friction_adr,
+    #         "modify_params": {
+    #             "enable_step": 800_000,
+    #             "max_strength_step": 1_500_000,
+    #             "max_variation": 0.3
+    #         }
+    #     }
+    # )
 
-    object_scale_adr = CurrTerm(
-        func=mdp.modify_env_param,
-        params={
-            "address": "events.object_scale_size.params.scale_range",
-            "modify_fn": leaphand_mdp.object_scale_adr,
-            "modify_params": {
-                "enable_step": 1_000_000,
-                "max_strength_step": 1_800_000,
-                "max_variation": 0.2
-            }
-        }
-    )
+    # object_scale_adr = CurrTerm(
+    #     func=mdp.modify_env_param,
+    #     params={
+    #         "address": "events.object_scale_size.params.scale_range",
+    #         "modify_fn": leaphand_mdp.object_scale_adr,
+    #         "modify_params": {
+    #             "enable_step": 1_000_000,
+    #             "max_strength_step": 1_800_000,
+    #             "max_variation": 0.2
+    #         }
+    #     }
+    # )
 
     # 旋转轴复杂度课程学习
-    progressive_rotation_axis = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "commands.rotation_axis.rotation_axis_mode", # 指向CommandsCfg中的rotation_axis命令项/字段
-            "modify_fn": leaphand_mdp.progressive_rotation_axis,
-            "modify_params": {
-                "x_axis_step": 0,
-                "y_axis_step": 400_000,
-                "z_axis_step": 800_000,
-                "random_axis_step": 1_200_000
-            }
-        }
-    )
+    # simple_rotation_axis = CurrTerm(
+    #     func=mdp.modify_term_cfg,
+    #     params={
+    #         "address": "commands.rotation_axis.rotation_axis_mode", # 指向CommandsCfg中的rotation_axis命令项/字段
+    #         "modify_fn": leaphand_mdp.simple_rotation_axis,
+    #         "modify_params": {
+    #             "z_axis_step": 0,
+    #             "random_axis_step": 100
+    #         }
+    #     }
+    # )
 
 @configclass
 class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
@@ -561,6 +624,7 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
 
     # 课程学习配置 - 默认无课程学习，用户可以选择启用
     curriculum: object | None = None
+    # curriculum: CurriculumCfg = CurriculumCfg()  # 默认启用全部课程学习
 
     # 指尖身体名称列表
     fingertip_body_names = [
@@ -584,9 +648,6 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
     # 物理参数clear
     fall_penalty: float = -100.0
     fall_dist: float = 0.12
-
-    # 动作平滑参数（已弃用 - 现在使用ActionsCfg中的动作平滑配置）
-    # act_moving_average: float = 0.85  # 保留用于兼容性，实际平滑在ActionsCfg中配置
 
     # 历史窗口配置
     history_length: int = 3
@@ -623,18 +684,6 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
 @configclass
 class RewardOnlyCurriculumCfg:
     """仅奖励权重调整的课程学习配置"""
-
-    grasp_stability_weight = CurrTerm(
-        func=leaphand_mdp.modify_grasp_stability_weight,
-        params={
-            "term_name": "grasp_stability",
-            "early_weight": 2.0,
-            "mid_weight": 1.5,
-            "late_weight": 1.0,
-            "mid_step": 500_000,
-            "late_step": 1_000_000
-        }
-    )
 
     rotation_velocity_weight = CurrTerm(
         func=leaphand_mdp.modify_rotation_velocity_weight,
@@ -717,25 +766,6 @@ class ADROnlyCurriculumCfg:
 
 
 @configclass
-class RotationAxisOnlyCurriculumCfg:
-    """仅旋转轴复杂度的课程学习配置"""
-
-    progressive_rotation_axis = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "commands.rotation_axis.rotation_axis_mode",
-            "modify_fn": leaphand_mdp.progressive_rotation_axis,
-            "modify_params": {
-                "x_axis_step": 0,
-                "y_axis_step": 400_000,
-                "z_axis_step": 800_000,
-                "random_axis_step": 1_200_000
-            }
-        }
-    )
-
-
-@configclass
 class SimpleRotationAxisCurriculumCfg:
     """简化旋转轴复杂度的课程学习配置"""
 
@@ -756,31 +786,3 @@ class SimpleRotationAxisCurriculumCfg:
 # 环境配置变体 - 不同的课程学习策略
 ##
 
-@configclass
-class LeaphandContinuousRotFullCurriculumEnvCfg(LeaphandContinuousRotEnvCfg):
-    """完整课程学习的LeapHand连续旋转任务环境配置"""
-    curriculum: CurriculumCfg = CurriculumCfg()
-
-
-@configclass
-class LeaphandContinuousRotRewardOnlyEnvCfg(LeaphandContinuousRotEnvCfg):
-    """仅奖励权重课程学习的LeapHand连续旋转任务环境配置"""
-    curriculum: RewardOnlyCurriculumCfg = RewardOnlyCurriculumCfg()
-
-
-@configclass
-class LeaphandContinuousRotADROnlyEnvCfg(LeaphandContinuousRotEnvCfg):
-    """仅自适应域随机化课程学习的LeapHand连续旋转任务环境配置"""
-    curriculum: ADROnlyCurriculumCfg = ADROnlyCurriculumCfg()
-
-
-@configclass
-class LeaphandContinuousRotAxisOnlyEnvCfg(LeaphandContinuousRotEnvCfg):
-    """仅旋转轴复杂度课程学习的LeapHand连续旋转任务环境配置"""
-    curriculum: RotationAxisOnlyCurriculumCfg = RotationAxisOnlyCurriculumCfg()
-
-
-@configclass
-class LeaphandContinuousRotSimpleAxisEnvCfg(LeaphandContinuousRotEnvCfg):
-    """简化旋转轴课程学习的LeapHand连续旋转任务环境配置"""
-    curriculum: SimpleRotationAxisCurriculumCfg = SimpleRotationAxisCurriculumCfg()

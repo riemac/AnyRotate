@@ -54,3 +54,12 @@ LEAP_HAND_CFG = ArticulationCfg(
     },
     soft_joint_pos_limit_factor=1.0,
 )
+
+# Note: LeapHand各Body名称
+# 读取USD文件: /home/hac/isaac/leaphand/source/leaphand/assets/leap_hand_v1_right/leap_hand_right.usd
+# LeapHand机器人的主要组成部分:
+# - 手掌: palm_lower
+# - 食指: mcp_joint -> pip -> dip -> fingertip -> index_tip_head 
+# - 拇指: thumb_temp_base -> thumb_pip -> thumb_dip -> thumb_fingertip -> thumb_tip_head
+# - 中指: mcp_joint_2 -> pip_2 -> dip_2 -> fingertip_2 -> middle_tip_head
+# - 无名指: mcp_joint_3 -> pip_3 -> dip_3 -> fingertip_3 -> ring_tip_head
