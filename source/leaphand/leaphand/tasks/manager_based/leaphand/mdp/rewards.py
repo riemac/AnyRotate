@@ -44,6 +44,9 @@ def rotation_velocity_reward(
         物体旋转时的旋转轴和Body Frame的表示无关
 
         奖励公式：R = exp(-decay_factor * |projected_velocity - target_angular_speed|)
+    
+    TODO:
+        计划修改为奖惩一体型的，当speed_error为负，给予惩罚。speed_error为正，给予奖励
     """
     # 获取物体资产
     asset: RigidObject = env.scene[asset_cfg.name]
@@ -286,7 +289,7 @@ def rotation_axis_alignment_reward(
     # 限制点积值在[-1, 1]范围内，避免数值误差
     dot_product = torch.clamp(dot_product, -1.0, 1.0)
     # 计算夹角（取绝对值，因为我们关心的是对齐程度）
-    theta = torch.acos(torch.abs(dot_product))
+    theta = torch.acos(torch.abs(dot_product)) # TODO: 这里用绝对值可能有问题，会导致轴重合但方向相反的情况得到奖励
 
     # 计算指数衰减奖励
     angle_error = torch.clamp(theta - theta_tolerance, min=0.0)

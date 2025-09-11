@@ -333,7 +333,7 @@ class RewardsCfg:
     # 指尖距离惩罚：鼓励机器人靠近物体中心
     fingertip_distance_penalty = RewTerm(
         func=leaphand_mdp.fingertip_distance_penalty,
-        weight=-100.0,
+        weight=-150.0,
         params={
             "object_cfg": SceneEntityCfg("object"),
             "robot_cfg": SceneEntityCfg("robot"),
