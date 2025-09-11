@@ -287,7 +287,7 @@ class RewardsCfg:
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "visualize_actual_axis": True,  # 启用实际旋转轴可视化
-            "target_angular_speed": 1.5,   # 目标角速度 (rad/s)
+            "target_angular_speed": 1,   # 目标角速度 (rad/s)
             "positive_decay": 3.0,        # 正向奖励的指数衰减因子
             "negative_penalty_weight": 1,  # 负向惩罚权重
         },
@@ -314,7 +314,7 @@ class RewardsCfg:
     # 稳定性惩罚：减少不必要的震荡
     unstable_penalty = RewTerm(
         func=leaphand_mdp.unstable_penalty,
-        weight=-1.0,
+        weight=-1.0, # TODO:这个权重可能需要调大
         params={"object_cfg": SceneEntityCfg("object")},
     )
 
@@ -351,7 +351,7 @@ class RewardsCfg:
     # 掉落惩罚：物体掉落时的严重惩罚
     fall_penalty = RewTerm(
         func=leaphand_mdp.fall_penalty,
-        weight=-100.0,
+        weight=-1000.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "fall_distance": 0.12
@@ -454,6 +454,19 @@ class EventCfg:
 class CurriculumCfg:
     """课程学习配置 - 提供各种课程学习策略"""
 
+    # 动作缩放因子调整课程学习 - 解决探索与利用平衡问题
+    action_scale_factor = CurrTerm(
+        func=leaphand_mdp.modify_action_scale_factor,  # 直接调用修改函数
+        params={
+            "action_term_name": "hand_joint_pos",  # 动作项名称
+            "alpha_max": 0.15,        # 起始值：较大，利于前期探索
+            "alpha_min": 0.05,        # 终止值：较小，利于后期精细控制
+            "start_step": 0,          # 立即开始递减
+            "end_step": 1000          # 测试用：1000步内完成递减（实际使用时应设为更大值）
+        }
+    )
+    
+
     # 奖励权重调整课程学习
     # grasp_stability_weight = CurrTerm(
     #     func=leaphand_mdp.modify_grasp_stability_weight,
@@ -495,20 +508,8 @@ class CurriculumCfg:
         func=mdp.modify_reward_weight,
         params={
             "term_name": "fingertip_distance_penalty",
-            "weight": -20.0,
+            "weight": -50.0,
             "num_steps": 100*horizon_length*num_envs
-        }
-    )
-
-    fall_penalty_weight = CurrTerm(
-        func=leaphand_mdp.modify_fall_penalty_weight,
-        params={
-            "term_name": "fall_penalty",
-            "early_weight": -200.0,
-            "mid_weight": -100.0,
-            "late_weight": -50.0,
-            "mid_step": 20*horizon_length*num_envs,
-            "late_step": 100*horizon_length*num_envs
         }
     )
 
@@ -683,107 +684,54 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
 ##
 
 @configclass
-class RewardOnlyCurriculumCfg:
-    """仅奖励权重调整的课程学习配置"""
+class ActionScaleCurriculumCfg:
+    """动作缩放因子调整的课程学习配置 - 专门解决探索与利用平衡问题"""
 
-    rotation_velocity_weight = CurrTerm(
-        func=leaphand_mdp.modify_rotation_velocity_weight,
-        params={
-            "term_name": "rotation_velocity_reward",
-            "early_weight": 10.0,
-            "mid_weight": 15.0,
-            "late_weight": 20.0,
-            "mid_step": 300_000,
-            "late_step": 800_000
-        }
-    )
-
-    fall_penalty_weight = CurrTerm(
-        func=leaphand_mdp.modify_fall_penalty_weight,
-        params={
-            "term_name": "fall_penalty",
-            "early_weight": -50.0,
-            "mid_weight": -100.0,
-            "late_weight": -150.0,
-            "mid_step": 600_000,
-            "late_step": 1_200_000
-        }
-    )
-
-    # 姿态偏差惩罚权重调整
-    pose_diff_penalty_weight = CurrTerm(
-        func=mdp.modify_reward_weight,
-        params={
-            "term_name": "pose_diff_penalty",
-            "weight": -0.02,
-            "num_steps": 800_000
-        }
-    )
-
-
-@configclass
-class ADROnlyCurriculumCfg:
-    """仅自适应域随机化的课程学习配置"""
-
-    object_mass_adr = CurrTerm(
-        func=mdp.modify_env_param,
-        params={
-            "address": "events.object_scale_mass.params.mass_distribution_params",
-            "modify_fn": leaphand_mdp.object_mass_adr,
-            "modify_params": {
-                "enable_step": 600_000,
-                "max_strength_step": 1_200_000,
-                "max_variation": 0.5
-            }
-        }
-    )
-
-    friction_adr = CurrTerm(
-        func=mdp.modify_env_param,
-        params={
-            "address": "events.object_physics_material.params.static_friction_range",
-            "modify_fn": leaphand_mdp.friction_adr,
-            "modify_params": {
-                "enable_step": 800_000,
-                "max_strength_step": 1_500_000,
-                "max_variation": 0.3
-            }
-        }
-    )
-
-    # 物体尺寸随机化ADR
-    object_scale_adr = CurrTerm(
-        func=mdp.modify_env_param,
-        params={
-            "address": "events.object_scale_size.params.scale_range",
-            "modify_fn": leaphand_mdp.object_scale_adr,
-            "modify_params": {
-                "enable_step": 1_000_000,
-                "max_strength_step": 1_800_000,
-                "max_variation": 0.2
-            }
-        }
-    )
-
-
-@configclass
-class SimpleRotationAxisCurriculumCfg:
-    """简化旋转轴复杂度的课程学习配置"""
-
-    simple_rotation_axis = CurrTerm(
+    # 保守型调整：缓慢递减，适合稳定训练
+    conservative_action_scale = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "commands.rotation_axis.rotation_axis_mode",
-            "modify_fn": leaphand_mdp.simple_rotation_axis,
+            "address": "actions.hand_joint_pos.scale",
+            "modify_fn": leaphand_mdp.modify_action_scale_factor,
             "modify_params": {
-                "z_axis_step": 0,
-                "random_axis_step": 1_000_000
+                "alpha_max": 0.12,        # 起始值：中等大小
+                "alpha_min": 0.08,        # 终止值：中等大小
+                "start_step": 1*horizon_length*num_envs,   # 20轮次后开始递减
+                "end_step": 10*horizon_length*num_envs     # 150轮次完成递减
             }
         }
     )
-
 
 ##
 # 环境配置变体 - 不同的课程学习策略
 ##
+
+@configclass
+class LeaphandContinuousRotActionScaleEnvCfg(LeaphandContinuousRotEnvCfg):
+    """LeapHand连续旋转任务环境配置 - 包含动作缩放因子动态调整
+
+    这个配置变体专门用于测试和使用动作增量因子的动态调整功能。
+    解决了固定缩放因子导致的前期探索不足和后期精细控制欠佳的问题。
+
+    特性：
+    - 动作缩放因子从0.15线性递减到0.05
+    - 在10个训练轮次内完成递减过程
+    - 前期利于探索，后期利于精细控制
+    """
+
+    # 使用包含动作缩放因子调整的课程学习配置
+    curriculum: CurriculumCfg = CurriculumCfg()
+
+
+@configclass
+class LeaphandContinuousRotConservativeScaleEnvCfg(LeaphandContinuousRotEnvCfg):
+    """LeapHand连续旋转任务环境配置 - 保守型动作缩放调整
+
+    使用保守的动作缩放因子调整策略，适合稳定训练：
+    - 缓慢递减：从0.12到0.08
+    - 延迟启动：20轮次后开始
+    - 长期调整：150轮次完成
+    """
+
+    curriculum: ActionScaleCurriculumCfg = ActionScaleCurriculumCfg()
 
