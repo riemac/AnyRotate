@@ -20,12 +20,13 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
-def rotation_velocity_reward(
+def rotation_velocity(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     visualize_actual_axis: bool = True,
     target_angular_speed: float = 1.5,
-    decay_factor: float = 5.0,
+    positive_decay: float = 5.0,
+    negative_penalty_weight: float = 2.0,
 ) -> torch.Tensor:
     """计算旋转速度奖励 - 目标是达到指定的角速度而非越快越好
 
@@ -34,7 +35,8 @@ def rotation_velocity_reward(
         asset_cfg: 物体资产配置
         visualize_actual_axis: 是否可视化实际旋转轴
         target_angular_speed: 目标角速度大小 (rad/s)
-        decay_factor: 指数衰减因子
+        positive_decay: 正向奖励的指数衰减因子
+        negative_penalty_weight: 负向惩罚的权重系数
 
     Returns:
         旋转速度奖励 (num_envs,)
@@ -43,10 +45,9 @@ def rotation_velocity_reward(
         旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
         物体旋转时的旋转轴和Body Frame的表示无关
 
-        奖励公式：R = exp(-decay_factor * |projected_velocity - target_angular_speed|)
-    
-    TODO:
-        计划修改为奖惩一体型的，当speed_error为负，给予惩罚。speed_error为正，给予奖励
+        奖励公式：
+        - 正向速度: R = exp(-positive_decay * |projected_velocity - target_angular_speed|)
+        - 负向速度: R = negative_penalty_weight * projected_velocity (负惩罚)
     """
     # 获取物体资产
     asset: RigidObject = env.scene[asset_cfg.name]
@@ -79,9 +80,25 @@ def rotation_velocity_reward(
     # 更新上一帧旋转
     env.last_object_rot[:] = current_object_rot.clone()
 
-    # 计算目标角速度奖励 - 使用指数衰减型奖励
-    speed_error = torch.abs(projected_velocity - target_angular_speed) # 目标是让projected_velocity（带方向）接近target_angular_speed
-    reward = torch.exp(-decay_factor * speed_error)
+    # --- 核心修改：使用奖惩一体的逻辑 ---
+    # 1. 对于正向速度 (方向正确)
+    #    我们使用指数衰减形式，鼓励逼近目标速度
+    speed_error_positive = torch.abs(projected_velocity - target_angular_speed)
+    reward_positive = torch.exp(-positive_decay * speed_error_positive)
+
+    # 2. 对于负向速度 (方向错误)
+    #    我们使用一个线性的惩罚项。速度越负，惩罚越大。
+    #    projected_velocity是负的，所以乘以一个正权重就变成了负的奖励（惩罚）
+    reward_negative = negative_penalty_weight * projected_velocity
+
+    # 3. 使用 torch.where 根据速度方向选择奖励/惩罚
+    #    当 projected_velocity > 0 时，采用 reward_positive
+    #    否则 (<= 0)，采用 reward_negative
+    reward = torch.where(
+        projected_velocity > 0,
+        reward_positive,
+        reward_negative
+    )
 
     # 可视化实际旋转轴
     if visualize_actual_axis:
@@ -288,8 +305,8 @@ def rotation_axis_alignment_reward(
     dot_product = torch.sum(axis * target_axis, dim=-1)
     # 限制点积值在[-1, 1]范围内，避免数值误差
     dot_product = torch.clamp(dot_product, -1.0, 1.0)
-    # 计算夹角（取绝对值，因为我们关心的是对齐程度）
-    theta = torch.acos(torch.abs(dot_product)) # TODO: 这里用绝对值可能有问题，会导致轴重合但方向相反的情况得到奖励
+    # 计算夹角
+    theta = torch.acos(dot_product)
 
     # 计算指数衰减奖励
     angle_error = torch.clamp(theta - theta_tolerance, min=0.0)

@@ -282,23 +282,24 @@ class RewardsCfg:
 
     # 主要奖励：旋转速度奖励 - 目标角速度型
     rotation_velocity = RewTerm(
-        func=leaphand_mdp.rotation_velocity_reward,
+        func=leaphand_mdp.rotation_velocity,
         weight=15.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "visualize_actual_axis": True,  # 启用实际旋转轴可视化
             "target_angular_speed": 1.5,   # 目标角速度 (rad/s)
-            "decay_factor": 3.0,           # 指数衰减因子
+            "positive_decay": 3.0,        # 正向奖励的指数衰减因子
+            "negative_penalty_weight": 1,  # 负向惩罚权重
         },
     )
 
     # 旋转轴对齐奖励：鼓励实际旋转轴与目标旋转轴对齐
-    rotation_axis_alignment = RewTerm(
+    rotation_axis_alignment_reward = RewTerm(
         func=leaphand_mdp.rotation_axis_alignment_reward,
         weight=10.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
-            "theta_tolerance": 15/180*math.pi,  # 角度容忍度 (弧度)
+            "theta_tolerance": 10/180*math.pi,  # 角度容忍度 (弧度)
             "decay_factor": 5.0,     # 指数衰减因子
         },
     )
@@ -469,24 +470,24 @@ class CurriculumCfg:
     rotation_velocity_weight = CurrTerm(
         func=leaphand_mdp.modify_rotation_velocity_weight,
         params={
-            "term_name": "rotation_velocity_reward",
+            "term_name": "rotation_velocity",  # 修复：匹配RewardsCfg中的实际名称
             "early_weight": 10.0,
             "mid_weight": 20.0,
             "late_weight": 40.0,
-            "mid_step": 20*horizon_length*num_envs,
-            "late_step": 100*horizon_length*num_envs
+            "mid_step": 50*horizon_length*num_envs,  # 1,200,000步
+            "late_step": 120*horizon_length*num_envs  # 2,880,000步
         }
     )
 
     rotation_axis_alignment_weight = CurrTerm(
         func=leaphand_mdp.modify_rotation_axis_alignment_weight,
         params={
-            "term_name": "rotation_axis_alignment_reward",
+            "term_name": "rotation_axis_alignment_reward",  # 修复：匹配RewardsCfg中的实际名称
             "early_weight": 10.0,
             "mid_weight": 20.0,
             "late_weight": 40.0,
-            "mid_step": 20*horizon_length*num_envs,
-            "late_step": 100*horizon_length*num_envs
+            "mid_step": 100*horizon_length*num_envs,  # 2,400,000步
+            "late_step": 250*horizon_length*num_envs  # 6,000,000步
         }
     )
     
@@ -622,9 +623,9 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
 
-    # 课程学习配置 - 默认无课程学习，用户可以选择启用
-    curriculum: object | None = None
-    # curriculum: CurriculumCfg = CurriculumCfg()  # 默认启用全部课程学习
+    # 课程学习配置 - 启用全部课程学习
+    # curriculum: object | None = None  # 禁用课程学习
+    curriculum: CurriculumCfg = CurriculumCfg()  # 启用全部课程学习
 
     # 指尖身体名称列表
     fingertip_body_names = [

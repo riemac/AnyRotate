@@ -50,12 +50,21 @@ def modify_rotation_velocity_weight(
     """
     current_step = env.common_step_counter
 
+    # 确定当前应该使用的权重
     if current_step >= late_step:
-        return late_weight
+        new_weight = late_weight
     elif current_step >= mid_step:
-        return mid_weight
+        new_weight = mid_weight
     else:
-        return early_weight
+        new_weight = early_weight
+
+    # 获取当前奖励项配置并更新权重
+    term_cfg = env.reward_manager.get_term_cfg(term_name)
+    if term_cfg.weight != new_weight:
+        term_cfg.weight = new_weight
+        env.reward_manager.set_term_cfg(term_name, term_cfg)
+
+    return new_weight
 
 
 def modify_rotation_axis_alignment_weight(
@@ -86,12 +95,21 @@ def modify_rotation_axis_alignment_weight(
     """
     current_step = env.common_step_counter
 
+    # 确定当前应该使用的权重
     if current_step >= late_step:
-        return late_weight
+        new_weight = late_weight
     elif current_step >= mid_step:
-        return mid_weight
+        new_weight = mid_weight
     else:
-        return early_weight
+        new_weight = early_weight
+
+    # 获取当前奖励项配置并更新权重
+    term_cfg = env.reward_manager.get_term_cfg(term_name)
+    if term_cfg.weight != new_weight:
+        term_cfg.weight = new_weight
+        env.reward_manager.set_term_cfg(term_name, term_cfg)
+
+    return new_weight
 
 
 def modify_fall_penalty_weight(
@@ -122,12 +140,21 @@ def modify_fall_penalty_weight(
     """
     current_step = env.common_step_counter
 
+    # 确定当前应该使用的权重
     if current_step >= late_step:
-        return late_weight
+        new_weight = late_weight
     elif current_step >= mid_step:
-        return mid_weight
+        new_weight = mid_weight
     else:
-        return early_weight
+        new_weight = early_weight
+
+    # 获取当前奖励项配置并更新权重
+    term_cfg = env.reward_manager.get_term_cfg(term_name)
+    if term_cfg.weight != new_weight:
+        term_cfg.weight = new_weight
+        env.reward_manager.set_term_cfg(term_name, term_cfg)
+
+    return new_weight
 
 
 # ============================================================================
