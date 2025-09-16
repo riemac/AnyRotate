@@ -11,10 +11,11 @@
 - Optionally saves plots (if matplotlib is available) and JSON summaries
 
 Example:
-python scripts/rl_games/analysis.py \
+python scripts/evaluate/analysis.py \
   --task "<YourTaskRegistryPath>" \
   --checkpoint logs/rl_games/<agent_name>/<run_dir>/nn/<agent_name>.pth \
   --epochs 20 --max_steps 3000 --num_envs 8 --deterministic --plot
+TODO: 大体没问题，但是总奖励计算感觉有些不对，以后待检查
 """
 
 import argparse

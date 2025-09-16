@@ -126,7 +126,7 @@ class LeaphandContinuousRotSceneCfg(InteractiveSceneCfg):
             # 初始位置：(x=0.0, y=-0.1, z=0.56)
             # z=0.56是在LeapHand手部上方的合适高度
             # y=-0.1稍微偏离中心，给抓取提供更好的角度
-            pos=(0.0, -0.1, 0.56), # root_pos_w
+            pos=(0.0, -0.1, 0.56), # root_pos_w -0.05比-0.1稍微更偏近手掌中心，相对更容易抓取
             
             # 初始旋转：(w=1.0, x=0.0, y=0.0, z=0.0)
             # 这是单位四元数，表示无旋转（立方体的标准朝向）
@@ -171,26 +171,27 @@ class ActionsCfg:
     #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
     # )
 
-    # # 方案2：EMA指数移动平均平滑控制（推荐 - 类似官方LeapHand的绝对控制+平滑）
-    # hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
-    #     asset_name="robot",
-    #     joint_names=["a_.*"],  # 所有手部关节
-    #     scale=1.0,  # 动作缩放因子
-    #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
-    #     alpha=1/24,  # EMA平滑系数：0.1表示当前动作10%权重，历史90%权重（强平滑）
-    #                 # 参考：官方LeapHand使用 1/24≈0.042 (超强平滑) 或者一开始抖动，后面慢慢平滑？
-    #                 # 建议范围：0.05-0.2，值越小越平滑但响应越慢
-    # )
-
-    # 方案3：相对位置增量控制（天然平滑 - 类似官方LeapHand的相对控制）
-    hand_joint_pos = mdp.RelativeJointPositionActionCfg(
+    # 方案2：EMA指数移动平均平滑控制（推荐 - 类似官方LeapHand的绝对控制+平滑）
+    hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
         asset_name="robot",
         joint_names=["a_.*"],  # 所有手部关节
-        scale=0.1,  # 增量缩放因子：控制每步的最大位置变化量
-                     # 参考：官方LeapHand相对模式使用很小的增量
-                     # 建议范围：0.01-0.1，值越小动作越平滑但学习越慢
-        use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
+        scale=1.0,  # 动作缩放因子
+        rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
+        alpha=1/24,  # EMA平滑系数：0.1表示当前动作10%权重，历史90%权重（强平滑）
+                    # 参考：官方LeapHand使用 1/24≈0.042 (超强平滑) 或者一开始抖动，后面慢慢平滑？
+                    # 建议范围：0.05-0.2，值越小越平滑但响应越慢
     )
+
+    # 方案3：相对位置增量控制（天然平滑 - 类似官方LeapHand的相对控制）
+    # hand_joint_pos = mdp.RelativeJointPositionActionCfg(
+    #     asset_name="robot",
+    #     joint_names=["a_.*"],  # 所有手部关节
+    #     scale=1/24,  # 增量缩放因子：控制每步的最大位置变化量
+    #                  # 参考：官方LeapHand相对模式使用很小的增量
+    #                  # 建议范围：0.01-0.1，值越小动作越平滑但学习越慢
+    #     use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
+    # )
+
 
 @configclass
 class ObservationsCfg:
@@ -283,24 +284,24 @@ class RewardsCfg:
     # 主要奖励：旋转速度奖励 - 目标角速度型
     rotation_velocity = RewTerm(
         func=leaphand_mdp.rotation_velocity,
-        weight=15.0,
+        weight=40.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "visualize_actual_axis": True,  # 启用实际旋转轴可视化
             "target_angular_speed": 1,   # 目标角速度 (rad/s)
             "positive_decay": 3.0,        # 正向奖励的指数衰减因子
-            "negative_penalty_weight": 1,  # 负向惩罚权重
+            "negative_penalty_weight": 0.5,  # 负向惩罚权重
         },
     )
 
     # 旋转轴对齐奖励：鼓励实际旋转轴与目标旋转轴对齐
     rotation_axis_alignment_reward = RewTerm(
         func=leaphand_mdp.rotation_axis_alignment_reward,
-        weight=10.0,
+        weight=20.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "theta_tolerance": 10/180*math.pi,  # 角度容忍度 (弧度)
-            "decay_factor": 5.0,     # 指数衰减因子
+            "decay_factor": 10.0,     # 指数衰减因子
         },
     )
 
@@ -314,7 +315,7 @@ class RewardsCfg:
     # 稳定性惩罚：减少不必要的震荡
     unstable_penalty = RewTerm(
         func=leaphand_mdp.unstable_penalty,
-        weight=-1.0, # TODO:这个权重可能需要调大
+        weight=-5.0, # TODO:这个权重可能需要调大
         params={"object_cfg": SceneEntityCfg("object")},
     )
 
@@ -327,14 +328,14 @@ class RewardsCfg:
     # 姿态偏差惩罚：鼓励保持接近人手的自然姿态
     pose_diff_penalty = RewTerm(
         func=leaphand_mdp.pose_diff_penalty,
-        weight=-1,
+        weight=-0.5, # 初始是-1
         params={"asset_cfg": SceneEntityCfg("robot")},
     )
 
     # 指尖距离惩罚：鼓励机器人靠近物体中心
     fingertip_distance_penalty = RewTerm(
         func=leaphand_mdp.fingertip_distance_penalty,
-        weight=-150.0,
+        weight=-100.0, # 初始是-100
         params={
             "object_cfg": SceneEntityCfg("object"),
             "robot_cfg": SceneEntityCfg("robot"),
@@ -344,14 +345,14 @@ class RewardsCfg:
     # 扭矩惩罚：鼓励使用较小的关节扭矩
     torque_penalty = RewTerm(
         func=mdp.joint_torques_l2,
-        weight=-1,
+        weight=-0.5,
         params={"asset_cfg": SceneEntityCfg("robot")},
     )
 
     # 掉落惩罚：物体掉落时的严重惩罚
     fall_penalty = RewTerm(
         func=leaphand_mdp.fall_penalty,
-        weight=-1000.0,
+        weight=-500.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "fall_distance": 0.12
@@ -453,18 +454,6 @@ class EventCfg:
 @configclass
 class CurriculumCfg:
     """课程学习配置 - 提供各种课程学习策略"""
-
-    # 动作缩放因子调整课程学习 - 解决探索与利用平衡问题
-    action_scale_factor = CurrTerm(
-        func=leaphand_mdp.modify_action_scale_factor,  # 直接调用修改函数
-        params={
-            "action_term_name": "hand_joint_pos",  # 动作项名称
-            "alpha_max": 0.15,        # 起始值：较大，利于前期探索
-            "alpha_min": 0.05,        # 终止值：较小，利于后期精细控制
-            "start_step": 0,          # 立即开始递减
-            "end_step": 1000          # 测试用：1000步内完成递减（实际使用时应设为更大值）
-        }
-    )
     
 
     # 奖励权重调整课程学习
@@ -487,8 +476,8 @@ class CurriculumCfg:
             "early_weight": 10.0,
             "mid_weight": 20.0,
             "late_weight": 40.0,
-            "mid_step": 50*horizon_length*num_envs,  # 1,200,000步
-            "late_step": 120*horizon_length*num_envs  # 2,880,000步
+            "mid_step": 100*horizon_length*num_envs,  # 1,200,000步
+            "late_step": 250*horizon_length*num_envs  # 2,880,000步
         }
     )
 
@@ -508,8 +497,17 @@ class CurriculumCfg:
         func=mdp.modify_reward_weight,
         params={
             "term_name": "fingertip_distance_penalty",
-            "weight": -50.0,
+            "weight": -12.0,
             "num_steps": 100*horizon_length*num_envs
+        }
+    )
+    
+    unstable_penalty_weight = CurrTerm(
+        func=mdp.modify_reward_weight,
+        params={
+            "term_name": "unstable_penalty",
+            "weight": -10.0,
+            "num_steps": 200*horizon_length*num_envs
         }
     )
 
@@ -517,7 +515,16 @@ class CurriculumCfg:
         func=mdp.modify_reward_weight,
         params={
             "term_name": "action_penalty",
-            "weight": -1, # 后期加大动作惩罚
+            "weight": -0.5, # 后期加大动作惩罚
+            "num_steps": 200*horizon_length*num_envs
+        }
+    )
+
+    torque_penalty_weight = CurrTerm(
+        func=mdp.modify_reward_weight,
+        params={
+            "term_name": "torque_penalty",
+            "weight": -1.2, # 后期加大扭矩惩罚
             "num_steps": 200*horizon_length*num_envs
         }
     )
@@ -528,7 +535,7 @@ class CurriculumCfg:
         params={
             "term_name": "pose_diff_penalty",
             "weight": -0.2,  # 后期减轻姿态约束
-            "num_steps": 200*horizon_length*num_envs
+            "num_steps": 100*horizon_length*num_envs
         }
     )
 
@@ -683,55 +690,5 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
 # 课程学习配置变体
 ##
 
-@configclass
-class ActionScaleCurriculumCfg:
-    """动作缩放因子调整的课程学习配置 - 专门解决探索与利用平衡问题"""
 
-    # 保守型调整：缓慢递减，适合稳定训练
-    conservative_action_scale = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "actions.hand_joint_pos.scale",
-            "modify_fn": leaphand_mdp.modify_action_scale_factor,
-            "modify_params": {
-                "alpha_max": 0.12,        # 起始值：中等大小
-                "alpha_min": 0.08,        # 终止值：中等大小
-                "start_step": 1*horizon_length*num_envs,   # 20轮次后开始递减
-                "end_step": 10*horizon_length*num_envs     # 150轮次完成递减
-            }
-        }
-    )
-
-##
-# 环境配置变体 - 不同的课程学习策略
-##
-
-@configclass
-class LeaphandContinuousRotActionScaleEnvCfg(LeaphandContinuousRotEnvCfg):
-    """LeapHand连续旋转任务环境配置 - 包含动作缩放因子动态调整
-
-    这个配置变体专门用于测试和使用动作增量因子的动态调整功能。
-    解决了固定缩放因子导致的前期探索不足和后期精细控制欠佳的问题。
-
-    特性：
-    - 动作缩放因子从0.15线性递减到0.05
-    - 在10个训练轮次内完成递减过程
-    - 前期利于探索，后期利于精细控制
-    """
-
-    # 使用包含动作缩放因子调整的课程学习配置
-    curriculum: CurriculumCfg = CurriculumCfg()
-
-
-@configclass
-class LeaphandContinuousRotConservativeScaleEnvCfg(LeaphandContinuousRotEnvCfg):
-    """LeapHand连续旋转任务环境配置 - 保守型动作缩放调整
-
-    使用保守的动作缩放因子调整策略，适合稳定训练：
-    - 缓慢递减：从0.12到0.08
-    - 延迟启动：20轮次后开始
-    - 长期调整：150轮次完成
-    """
-
-    curriculum: ActionScaleCurriculumCfg = ActionScaleCurriculumCfg()
 

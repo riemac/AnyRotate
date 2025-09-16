@@ -38,7 +38,9 @@ leaphand/                    # 项目根目录
 
 IsaacLab/                    # IsaacLab官方核心框架目录
 
-LEAP_Hand_Isaac_Lab/           # LeapHand手官方的手内旋转项目（可参考）
+LEAP_Hand_Isaac_Lab/         # LeapHand官方的手内重定向项目（可参考）
+
+LEAP_Hand_Sim/               # 早期基于isaacgym的LeapHand官方的手内旋转项目（可参考）
 ```
 
 ## 开发规范

@@ -375,8 +375,9 @@ def unstable_penalty(
     # 获取物体资产
     object_asset: RigidObject = env.scene[object_cfg.name]
 
-    # 基于物体线速度的稳定性惩罚
+    # 基于物体线速度的稳定性惩罚 TODO：使用质心速度
     object_lin_vel = object_asset.data.root_lin_vel_w
+    # object_lin_vel = object_asset.data.body_com_lin_vel_w.squeeze(-2)
     penalty = torch.norm(object_lin_vel, p=2, dim=-1)
 
     return penalty

@@ -13,7 +13,7 @@
 4. 旋转轴对齐奖励
 
 使用方法:
-python scripts/test_enhanced_rewards.py --num_envs 4 --rotation_axis_mode random
+python scripts/evaluate/test_enhanced_rewards.py --num_envs 4 --rotation_axis_mode random
 
 NOTE: 本脚本可用于观察探索阶段奖励函数的效果，从而调整奖励函数的参数。
 """

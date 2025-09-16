@@ -133,3 +133,9 @@ Some examples of packages that can likely be excluded are:
 "<path-to-isaac-sim>/extscache/omni.services.*"     // Services tools
 ...
 ```
+
+## Documentation index
+
+All project docs are consolidated under `source/leaphand/docs/`. Start here:
+
+- source/leaphand/docs/README.md

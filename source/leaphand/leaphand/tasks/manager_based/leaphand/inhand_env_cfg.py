@@ -1,0 +1,214 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""LeapHand连续旋转任务环境配置 - ManagerBasedRLEnv架构
+- 该配置类的奖励项将参考LEAP_Hand_Sim中的奖励项
+"""
+
+import math
+
+import isaaclab.sim as sim_utils
+from isaaclab.assets import ArticulationCfg, RigidObjectCfg
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg
+
+from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import ObservationGroupCfg as ObsGroup
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sim import PhysxCfg, SimulationCfg
+from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
+from isaaclab.utils import configclass
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+
+
+import isaaclab.envs.mdp as mdp
+from leaphand.robots.leap import LEAP_HAND_CFG
+from . import mdp as leaphand_mdp
+from .mdp.commands import RotationAxisCommandCfg
+
+# 全局超参数(来源于rl_games_ppo_cfg.yaml)
+num_envs = 100
+horizon_length = 240
+
+# 使用Isaac Lab内置的cube资产
+object_usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"
+
+# Scene definition
+@configclass
+class LeaphandContinuousRotSceneCfg(InteractiveSceneCfg):
+    """LeapHand连续旋转任务场景配置"""
+
+    # 地面
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.1)),
+    )
+
+    # 机器人 - 修改初始关节位置让手指有适当弯曲（与官方一致）
+    robot: ArticulationCfg = LEAP_HAND_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=(0.0, 0.0, 0.5),
+            rot=(0.5, 0.5, -0.5, 0.5),
+            joint_pos={
+                "a_1": 0.000, "a_12": 0.500, "a_5": 0.000, "a_9": 0.000,
+                "a_0": -0.750, "a_13": 1.300, "a_4": 0.000, "a_8": 0.750,
+                "a_2": 1.750, "a_14": 1.500, "a_6": 1.750, "a_10": 1.750,
+                "a_3": 0.000, "a_15": 1.000, "a_7": 0.000, "a_11": 0.000,
+            },
+            joint_vel={"a_.*": 0.0},
+        )
+    )
+
+    # 物体配置 - 用于连续旋转任务的立方体
+    object: RigidObjectCfg = RigidObjectCfg(
+        # USD场景路径：每个环境实例都有独立的物体
+        prim_path="{ENV_REGEX_NS}/object",
+        
+        # 生成配置：从USD文件加载立方体并设置物理属性
+        spawn=sim_utils.UsdFileCfg(
+            # USD资产路径：使用Isaac Nucleus中的可变形立方体
+            usd_path=object_usd_path,
+            
+            # 刚体物理属性配置
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                # 动力学模式：False = 动力学刚体，受物理力影响（重力、碰撞等）
+                # True = 运动学刚体，只能通过代码直接控制位置，不受物理力影响
+                kinematic_enabled=False,
+                
+                # 重力开关：False = 物体受重力影响，会自然掉落
+                # True = 禁用重力，物体悬浮在空中
+                disable_gravity=False,
+                
+                # 陀螺力：True = 启用陀螺效应，旋转物体时会产生陀螺力矩
+                # 这对旋转任务很重要，让物体的旋转行为更真实
+                enable_gyroscopic_forces=True,
+                
+                # 位置求解器迭代次数：控制碰撞检测和位置校正的精度
+                # 值越高精度越高但性能开销越大，8是手部操作任务的推荐值
+                solver_position_iteration_count=8,
+                
+                # 速度求解器迭代次数：控制速度约束的求解精度
+                # 0表示使用PhysX默认值，通常用于提高计算效率
+                solver_velocity_iteration_count=0,
+                
+                # 休眠阈值：当物体速度低于此值时进入休眠状态以节省计算
+                # 0.005 m/s是合理的阈值，避免微小振动浪费计算资源
+                sleep_threshold=0.005,
+                
+                # 稳定化阈值：用于防止小的穿透和抖动
+                # 较小的值让物体接触更稳定，特别重要对于精细操作
+                stabilization_threshold=0.0025,
+                
+                # 最大去穿透速度：防止物体在碰撞时以过高速度分离
+                # 1000.0是一个很高的值，允许快速的碰撞响应
+                max_depenetration_velocity=1000.0,
+            ),
+            
+            # 质量属性：通过密度自动计算物体质量
+            # 400.0 kg/m³ 相当于轻木材的密度，适合手部操作
+            mass_props=sim_utils.MassPropertiesCfg(density=400.0),
+            
+            # 缩放系数：(1.2, 1.2, 1.2) 表示在XYZ三个方向都放大1.2倍
+            # 让立方体稍大一些，更容易被手抓取和操作
+            scale=(1.2, 1.2, 1.2),
+        ),
+        
+        # 初始状态配置：定义物体在环境重置时的初始位置和姿态
+        init_state=RigidObjectCfg.InitialStateCfg(
+            # 初始位置：(x=0.0, y=-0.1, z=0.56)
+            # z=0.56是在LeapHand手部上方的合适高度
+            # y=-0.1稍微偏离中心，给抓取提供更好的角度
+            pos=(0.0, -0.1, 0.56), # root_pos_w -0.05比-0.1稍微更偏近手掌中心，相对更容易抓取
+            
+            # 初始旋转：(w=1.0, x=0.0, y=0.0, z=0.0)
+            # 这是单位四元数，表示无旋转（立方体的标准朝向）
+            rot=(1.0, 0.0, 0.0, 0.0)
+        ),
+    )
+
+    # 光照
+    light = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
+    )
+
+@configclass
+class CommandsCfg:
+    """Commands specifications for the MDP."""
+    pass
+
+
+@configclass
+class ActionsCfg:
+    """Action specifications for the MDP."""
+    pass
+    
+
+@configclass
+class ObservationsCfg:
+    """观测配置 - 支持非对称Actor-Critic"""
+
+    @configclass
+    class PolicyCfg(ObsGroup):
+        """Actor策略观测 - 真实世界可获取的信息"""
+
+    @configclass
+    class CriticCfg(ObsGroup):
+        """Critic价值函数观测 - 包含特权信息"""
+
+    # 观测组配置
+    policy: PolicyCfg = PolicyCfg()
+    critic: CriticCfg = CriticCfg()
+
+
+@configclass
+class RewardsCfg:
+    """奖励配置 - 连续旋转任务奖励机制"""
+    pass
+
+
+@configclass
+class TerminationsCfg:
+    """终止条件配置"""
+
+    # 物体掉落终止
+    object_falling = DoneTerm(
+        func=leaphand_mdp.object_falling_termination,
+        params={
+            "object_cfg": SceneEntityCfg("object"),
+            "fall_dist": 0.12,
+            "target_pos_offset": (0.0, -0.1, 0.56),
+        },
+    )
+
+    # 超时终止
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+
+@configclass
+class EventCfg:
+    """域随机化配置 - 集成官方LeapHand的RL技巧"""
+    pass
+
+
+@configclass
+class CurriculumCfg:
+    """课程学习配置 - 提供各种课程学习策略"""
+    pass
+
+
+@configclass
+class InHandEnvCfg(ManagerBasedRLEnvCfg):
+    """LeapHand连续旋转任务环境配置类 - ManagerBasedRLEnv架构"""
+    pass
+
+
+

@@ -33,6 +33,18 @@ def object_falling_termination(
 
     Returns:
         物体掉落标志 (num_envs,)
+
+    Note:
+        物体掉落判定基于欧氏距离计算:
+        1. 目标位置计算: target_pos = env_origins + offset
+        2. 物体与目标位置的距离: dist = ||object_pos - target_pos||₂
+        3. 掉落判定条件: dist ≥ fall_dist
+        
+        其中:
+        - ||·||₂ 表示L2范数(欧氏距离)
+        - object_pos ∈ ℝ³ 为物体当前位置
+        - target_pos ∈ ℝ³ 为目标位置
+        - fall_dist ∈ ℝ⁺ 为掉落阈值
     """
     # 获取物体资产
     object_asset: RigidObject = env.scene[object_cfg.name]
