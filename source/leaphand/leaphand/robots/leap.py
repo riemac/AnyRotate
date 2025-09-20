@@ -42,14 +42,15 @@ LEAP_HAND_CFG = ArticulationCfg(
         rot=(0.5, 0.5, -0.5, 0.5),
         joint_pos={"a_.*": 0.0},
     ),
-    actuators={
+    actuators={ # 高度柔顺、低刚度的系统，通常由小型电机、腱驱动或欠驱动机构成，本质上不是“刚性”设备
         "fingers": ImplicitActuatorCfg(
             joint_names_expr=[".*"],
-            effort_limit=0.5,
-            velocity_limit=100.0,
-            stiffness=3.0,
-            damping=0.1,
-            friction=0.01,
+            effort_limit=0.5, # N·m NOTE: 来自LEAP_Hand_Sim官方官方URDF里的是0.95，但LEAP_Hand_Isaac_Lab官方里是0.5。现实设备暂不知晓
+            velocity_limit=100.0, # rad/s
+            stiffness=3.0, # N/m
+            damping=0.1, # N·s/m
+            friction=0.01, # 无单位
+            armature=0.001, # kg·m^2，来自LEAP_Hand_Sim官方
         ),
     },
     soft_joint_pos_limit_factor=1.0,

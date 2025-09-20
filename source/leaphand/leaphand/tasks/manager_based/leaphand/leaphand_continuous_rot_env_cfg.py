@@ -172,25 +172,25 @@ class ActionsCfg:
     # )
 
     # 方案2：EMA指数移动平均平滑控制（推荐 - 类似官方LeapHand的绝对控制+平滑）
-    hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
-        asset_name="robot",
-        joint_names=["a_.*"],  # 所有手部关节
-        scale=1.0,  # 动作缩放因子
-        rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
-        alpha=1/24,  # EMA平滑系数：0.1表示当前动作10%权重，历史90%权重（强平滑）
-                    # 参考：官方LeapHand使用 1/24≈0.042 (超强平滑) 或者一开始抖动，后面慢慢平滑？
-                    # 建议范围：0.05-0.2，值越小越平滑但响应越慢
-    )
-
-    # 方案3：相对位置增量控制（天然平滑 - 类似官方LeapHand的相对控制）
-    # hand_joint_pos = mdp.RelativeJointPositionActionCfg(
+    # hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
     #     asset_name="robot",
     #     joint_names=["a_.*"],  # 所有手部关节
-    #     scale=1/24,  # 增量缩放因子：控制每步的最大位置变化量
-    #                  # 参考：官方LeapHand相对模式使用很小的增量
-    #                  # 建议范围：0.01-0.1，值越小动作越平滑但学习越慢
-    #     use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
+    #     scale=1.0,  # 动作缩放因子
+    #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
+    #     alpha=1/24,  # EMA平滑系数：0.1表示当前动作10%权重，历史90%权重（强平滑）
+    #                 # 参考：官方LeapHand使用 1/24≈0.042 (超强平滑) 或者一开始抖动，后面慢慢平滑？
+    #                 # 建议范围：0.05-0.2，值越小越平滑但响应越慢
     # )
+
+    # 方案3：相对位置增量控制（天然平滑 - 类似官方LeapHand的相对控制）
+    hand_joint_pos = mdp.RelativeJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["a_.*"],  # 所有手部关节
+        scale=1/24,  # 增量缩放因子：控制每步的最大位置变化量
+                     # 参考：官方LeapHand相对模式使用很小的增量
+                     # 建议范围：0.01-0.1，值越小动作越平滑但学习越慢
+        use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
+    )
 
 
 @configclass

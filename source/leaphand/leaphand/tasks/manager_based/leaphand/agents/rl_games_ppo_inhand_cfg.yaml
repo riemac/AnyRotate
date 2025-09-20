@@ -42,7 +42,7 @@ params:
     
     # MLP网络配置
     mlp:
-      units: [512, 512, 256]  # 三层隐藏层，神经元数量分别为512,512,256
+      units: [512, 256, 128]  # 三层隐藏层，神经元数量分别为512,512,256
       activation: elu         # 使用ELU激活函数
       d2rl: False            # 不使用D2RL架构
       
@@ -51,13 +51,22 @@ params:
       regularizer:
         name: None          # 不使用正则化
 
+    # RNN配置
+    rnn:
+      name: gru             # 使用GRU循环神经网络单元
+      units: 256           # GRU隐藏层神经元数量
+      layers: 1            # GRU层数
+      before_mlp: True     # RNN层放在MLP层之前
+      concat_input: True   # 将输入与RNN输出拼接
+      layer_norm: True     # 使用层归一化
+
   # 模型加载配置
   load_checkpoint: False  # 是否加载检查点
   load_path: ''          # 检查点加载路径
 
   # 训练配置
   config:
-    name: leaphand_continuous_rot  # 任务名称
+    name: inhand_rot  # 任务名称
     env_name: rlgpu               # 使用GPU训练环境
     device: 'cuda:0'              # 使用第一块GPU
     device_name: 'cuda:0'         # 设备名称
@@ -73,7 +82,7 @@ params:
     normalize_advantage: True     # 对优势函数进行归一化
     gamma: 0.99                  # 折扣因子
     tau: 0.95                    # GAE-Lambda参数
-    learning_rate: 5e-4          # 学习率
+    learning_rate: 5e-3          # 学习率
     lr_schedule: adaptive        # 自适应学习率调整
     schedule_type: legacy        # 使用传统调度策略
     kl_threshold: 0.01           # KL散度阈值，控制策略更新幅度

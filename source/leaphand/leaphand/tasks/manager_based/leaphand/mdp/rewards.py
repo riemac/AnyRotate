@@ -41,7 +41,7 @@ def rotation_velocity(
     Returns:
         旋转速度奖励 (num_envs,)
 
-    Note:
+    NOTE:
         旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
         物体旋转时的旋转轴和Body Frame的表示无关
 
@@ -473,3 +473,146 @@ def pose_diff_penalty(
     pose_diff_penalty = torch.sum(pose_diff ** 2, dim=-1)
 
     return pose_diff_penalty
+
+###
+#  参考LEAP_Hand_Sim奖励项
+###
+
+def rotate_angvel_clipped(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    clip_min: float = -0.25,
+    clip_max: float = 0.25,
+) -> torch.Tensor:
+    """计算物体角速度在目标轴上的投影并裁剪。
+
+    Args:
+        env: ManagerBasedRLEnv
+            环境实例
+        asset_cfg: SceneEntityCfg
+            物体资产配置，默认为SceneEntityCfg("object")
+        clip_min: float
+            裁剪下限，默认为-0.25
+        clip_max: float
+            裁剪上限，默认为0.25
+
+    Returns:
+        裁剪后的角速度投影奖励 (num_envs,)
+
+    NOTE:
+        奖励公式：r = clip(dot(ω_w, â), clip_min, clip_max)
+        其中:
+        - ω_w: 物体在世界坐标系下的角速度向量
+        - â: 目标旋转轴的单位向量
+        - clip(): 裁剪函数，将值限制在[clip_min, clip_max]范围内
+    """
+    object_asset: RigidObject = env.scene[asset_cfg.name]
+    ang_vel_w = object_asset.data.root_ang_vel_w  # (N, 3)
+    target_axis = env.command_manager.get_command("rotation_axis")  # (N, 3)
+    # 投影到目标轴（假设target_axis已归一化，否则需归一化）
+    proj = torch.sum(ang_vel_w * target_axis, dim=-1)  # (N,)
+    # 可选：只奖励同向旋转
+    proj = torch.where(proj > 0, proj, torch.zeros_like(proj))
+    return torch.clamp(proj, min=clip_min, max=clip_max)
+
+
+def object_linvel_l1_penalty(
+    env: ManagerBasedRLEnv,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """计算物体线速度的L1范数惩罚。
+
+    Args:
+        env: 环境实例
+        object_cfg: 物体资产配置
+
+    Returns:
+        线速度惩罚 (num_envs,)
+
+    Note:
+        惩罚公式：P = ∑|v_w|
+        其中v_w是物体在世界坐标系下的线速度向量
+        使用L1范数可以分别惩罚各个方向的速度分量
+    """
+    object_asset: RigidObject = env.scene[object_cfg.name]
+    lin_vel_w = object_asset.data.root_lin_vel_w  # (N, 3)
+    return torch.sum(torch.abs(lin_vel_w), dim=-1)
+
+
+def torque_l2_penalty(
+    env: ManagerBasedRLEnv,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """官方风格：关节力矩 L2^2 惩罚，∑(τ^2)。
+
+    注意：等价于 isaaclab.envs.mdp.rewards.joint_torques_l2，这里提供同名本地实现以便独立权重控制。
+    返回形状：(num_envs,)
+    """
+    robot: Articulation = env.scene[robot_cfg.name]
+    tau = robot.data.applied_torque[:, robot_cfg.joint_ids]  # (N, DoF)
+    return torch.sum(torch.square(tau), dim=-1)
+
+
+def work_penalty_squared(
+    env: ManagerBasedRLEnv,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """机械功惩罚（平方项）
+
+    Args:
+        env: 环境实例
+        robot_cfg: 机器人资产配置
+
+    Returns:
+        机械功惩罚 (num_envs,)
+
+    NOTE:
+        数学公式：[NOTE: w = (∑_j τ_j · q̇_j)^2 ]
+        其中τ_j为第j个关节的力矩，q̇_j为第j个关节的速度。
+        该项鼓励在实现目标的同时降低做功（抑制无效挤压/抖动）。
+    """
+    robot: Articulation = env.scene[robot_cfg.name]
+    tau = robot.data.applied_torque[:, robot_cfg.joint_ids]  # (num_envs, DoF)
+    qd = robot.data.joint_vel[:, robot_cfg.joint_ids]        # (num_envs, DoF)
+    power = torch.sum(tau * qd, dim=-1)  # (num_envs,)
+    return torch.square(power)
+
+
+def object_fall_penalty(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    z_threshold: float = 0.10
+) -> torch.Tensor:
+    """计算物体掉落惩罚 - 基于z轴高度差异判断
+
+    Args:
+        env: 环境实例
+        asset_cfg: 物体资产配置
+        z_threshold: z轴高度差异阈值，超过此值判定为掉落
+
+    Returns:
+        掉落惩罚 (num_envs,)，掉落时为1，否则为0
+
+    NOTE:
+        惩罚公式：P = [|z - z_init| > threshold]
+        其中z是当前物体高度，z_init是初始高度
+        使用初始位置作为参考，避免手部移动导致的误判
+    """
+    # 获取物体资产
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # 获取物体位置（世界坐标系）
+    object_pos_w = asset.data.root_pos_w
+
+    # 转换为环境局部坐标系（减去环境原点偏移）
+    object_pos = object_pos_w - env.scene.env_origins
+
+    # 获取目标位置（环境局部坐标系中的手部附近位置）
+    inital_pos = asset.cfg.init_state.pos
+    target_pos = torch.tensor(inital_pos, device=env.device).expand(env.num_envs, -1)
+
+    # 计算距离
+    dz = torch.abs(object_pos[:, 2] - target_pos[:, 2])
+
+    # 如果距离超过阈值，返回惩罚
+    return torch.where(dz > z_threshold, torch.ones_like(dz), torch.zeros_like(dz))

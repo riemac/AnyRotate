@@ -112,3 +112,51 @@ def reset_object_state_uniform(
         asset.data.root_lin_vel_w[env_ids, 2] = sample_uniform(
             velocity_range["lin_vel_z"][0], velocity_range["lin_vel_z"][1], (len(env_ids),), device=env.device
         )
+
+
+def randomize_rigid_object_com(
+    env: "ManagerBasedRLEnv",
+    env_ids: torch.Tensor | None,
+    com_range: dict[str, tuple[float, float]],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+):
+    """为刚体对象(RigidObject)随机扰动质心（COM）。
+
+    注意：IsaacLab 内置的 randomize_rigid_body_com 主要面向 Articulation（形状为 (N, num_bodies, 3)）。
+    对于 RigidObject，其 get_coms()/set_coms() 形状通常为 (N, 3)。本函数做了相应适配，避免维度索引错误。
+
+    Args:
+        env: 训练环境
+        env_ids: 需要应用的环境索引；None 表示全部环境
+        com_range: 每轴扰动范围，如 {"x":(-0.01,0.01), "y":(-0.01,0.01), "z":(-0.01,0.01)}
+        asset_cfg: 目标资产配置，默认是 "object"
+    """
+    # 解析环境索引到 CPU（PhysX 接口期望 CPU 张量）
+    if env_ids is None:
+        env_ids = torch.arange(env.scene.num_envs, device="cpu")
+    else:
+        env_ids = env_ids.cpu()
+
+    # 获取对象
+    obj: RigidObject = env.scene[asset_cfg.name]
+
+    # 读取并克隆当前 COM，形状期望为 (num_envs, 3)
+    coms = obj.root_physx_view.get_coms().clone()
+    if coms.ndim != 2 or coms.shape[-1] != 3:
+        # 若形状异常，直接返回（保守回退）
+        return
+
+    # 采样随机扰动（逐轴范围）
+    lows = torch.tensor(
+        [com_range.get("x", (0.0, 0.0))[0], com_range.get("y", (0.0, 0.0))[0], com_range.get("z", (0.0, 0.0))[0]],
+        device="cpu",
+    )
+    highs = torch.tensor(
+        [com_range.get("x", (0.0, 0.0))[1], com_range.get("y", (0.0, 0.0))[1], com_range.get("z", (0.0, 0.0))[1]],
+        device="cpu",
+    )
+    noise = lows + torch.rand((len(env_ids), 3), device="cpu") * (highs - lows)
+
+    # 应用扰动到选定环境
+    coms[env_ids] += noise
+    obj.root_physx_view.set_coms(coms, env_ids)
