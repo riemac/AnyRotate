@@ -539,20 +539,6 @@ def object_linvel_l1_penalty(
     return torch.sum(torch.abs(lin_vel_w), dim=-1)
 
 
-def torque_l2_penalty(
-    env: ManagerBasedRLEnv,
-    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """官方风格：关节力矩 L2^2 惩罚，∑(τ^2)。
-
-    注意：等价于 isaaclab.envs.mdp.rewards.joint_torques_l2，这里提供同名本地实现以便独立权重控制。
-    返回形状：(num_envs,)
-    """
-    robot: Articulation = env.scene[robot_cfg.name]
-    tau = robot.data.applied_torque[:, robot_cfg.joint_ids]  # (N, DoF)
-    return torch.sum(torch.square(tau), dim=-1)
-
-
 def work_penalty_squared(
     env: ManagerBasedRLEnv,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
