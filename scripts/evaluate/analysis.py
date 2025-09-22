@@ -15,10 +15,10 @@ python scripts/evaluate/analysis.py \
   --task "<YourTaskRegistryPath>" \
   --checkpoint logs/rl_games/<agent_name>/<run_dir>/nn/<agent_name>.pth \
   --epochs 20 --max_steps 3000 --num_envs 8 --deterministic --plot
-TODO: 大体没问题，但是总奖励计算感觉有些不对，以后待检查
 """
 
 import argparse
+import sys
 import json
 import math
 import os
@@ -35,13 +35,15 @@ parser = argparse.ArgumentParser(description="Analyze rewards of a trained RL-Ga
 parser.add_argument("--task", type=str, required=True, help="Task registry path (same as used for training).")
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint (.pth) or logs dir.")
 parser.add_argument("--use_last_checkpoint", action="store_true", help="If no checkpoint specified, use last saved.")
-parser.add_argument("--epochs", type=int, default=10, help="Number of completed episodes to analyze (total across all envs).")
+parser.add_argument("--episodes", type=int, default=1, help="Per-env episodes to run before stopping (all envs must complete this many episodes).")
 parser.add_argument("--max_steps", type=int, default=3000, help="Max simulation steps (safety cap).")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--deterministic", action="store_true", help="Use deterministic policy actions.")
 parser.add_argument("--plot", action="store_true", help="Save plots of reward trends (requires matplotlib).")
 parser.add_argument("--output_dir", type=str, default=None, help="Directory to save analysis artifacts (PNG/JSON).")
 parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for computing discounted returns.")
+parser.add_argument("--min_episode_steps", type=int, default=0, help="Only count episodes with at least this many steps as accepted (per env).")
+parser.add_argument("--print_episode_lengths", action="store_true", help="Print per-env accepted episode lengths.")
 parser.add_argument("--real-time", action="store_true", default=False, help="Run roughly in real-time if possible.")
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
@@ -99,6 +101,34 @@ def _summarize_series(values: List[float]) -> Dict[str, float]:
         "p50": pct[50],
         "p95": pct[95],
     }
+
+
+def _read_tb_training_metric(run_dir: str):
+    """Read latest training metric from TensorBoard logs in run_dir.
+
+    Preference: rewards/iter > rewards/step > rewards/time. Returns dict {tag, value} or {}.
+    """
+    try:
+        from tensorboard.backend.event_processing.event_accumulator import EventAccumulator  # type: ignore
+    except Exception:
+        return {}
+
+    if not os.path.isdir(run_dir):
+        return {}
+    # EventAccumulator can take dir path directly
+    try:
+        ea = EventAccumulator(run_dir)
+        ea.Reload()
+        tags = ea.Tags() or {}
+        scalars = set(tags.get("scalars", [])) if isinstance(tags, dict) else set()
+        for tag in ["rewards/iter", "rewards/step", "rewards/time"]:
+            if tag in scalars:
+                events = ea.Scalars(tag)
+                if events:
+                    return {"tag": tag, "value": float(events[-1].value)}
+    except Exception:
+        return {}
+    return {}
 
 
 def main():
@@ -184,6 +214,9 @@ def main():
     for i, (n, w) in enumerate(zip(term_names, term_weights)):
         print(f"  {i+1:2d}. {n:<30} weight: {w:+.4f}")
 
+    # Determine per-env episode target (simplified semantics): all envs must complete this many episodes
+    episodes_per_env_target = int(args_cli.episodes)
+
     # Prepare analysis containers
     per_term_series: Dict[str, List[float]] = {name: [] for name in term_names}
     total_reward_series: List[float] = []  # mean across envs per step
@@ -192,21 +225,35 @@ def main():
     per_env_return = torch.zeros(base_env.num_envs, device=base_env.device)
     per_env_discounted_return = torch.zeros(base_env.num_envs, device=base_env.device)
     per_env_step_count = torch.zeros(base_env.num_envs, device=base_env.device, dtype=torch.long)
+    # Episode counting: raw (all) vs accepted (>= min-episode-steps)
+    per_env_episode_counts_raw = torch.zeros(base_env.num_envs, device=base_env.device, dtype=torch.long)
+    per_env_episode_counts_acc = torch.zeros(base_env.num_envs, device=base_env.device, dtype=torch.long)
+    # Episode lengths (steps)
+    episode_lengths_steps_acc: List[int] = []  # accepted episodes (>= min steps)
+    episode_lengths_steps_raw: List[int] = []  # all finished episodes (raw)
+    per_env_episode_lengths_acc: List[List[int]] = [[] for _ in range(base_env.num_envs)]
+    # Debug metrics removed in simplified mode
+    track_fall_metrics = False
+    term_debug_dist_at_done: List[float] = []
+    term_debug_dz_at_done: List[float] = []
 
     dt = base_env.step_dt
-    done_episodes = 0
-    steps = 0
+    done_episodes_raw = 0
+    done_episodes_acc = 0
 
     # Output dir
-    out_dir = args_cli.output_dir or os.path.join(log_root_path, log_dir, "analysis")
+    out_dir = args_cli.output_dir or os.path.join(log_dir, "analysis")
     _ensure_output_dir(out_dir)
 
     print("\n[INFO] Starting analysis loop...")
     start_wall = time.time()
     while simulation_app.is_running():
-        if done_episodes >= args_cli.epochs:
+        # Stopping criteria
+        # All envs must have reached at least K ACCEPTED episodes (strict criterion)
+        if torch.all(per_env_episode_counts_acc >= episodes_per_env_target):
             break
-        if steps >= args_cli.max_steps:
+        # Use Isaac Lab's common step counter for safety cap
+        if base_env.common_step_counter >= args_cli.max_steps:
             print("[WARN] Reached max_steps cap. Stopping analysis loop.")
             break
         step_start = time.time()
@@ -234,8 +281,9 @@ def main():
                 step_means = step_terms.mean(dim=0)
                 for i, name in enumerate(term_names):
                     per_term_series[name].append(float(step_means[i].item()))
-                # Total reward per env (weighted sum)
-                total_step_per_env = (step_terms * weight_vec).sum(dim=1)
+                # Total reward per env: IMPORTANT — step_terms are already weighted by term weights
+                # So the correct total is the sum over terms without applying weights again
+                total_step_per_env = step_terms.sum(dim=1)
                 total_reward_series.append(float(total_step_per_env.mean().item()))
                 # Accumulate episodic return
                 per_env_return += total_step_per_env
@@ -244,35 +292,56 @@ def main():
                 per_env_discounted_return += total_step_per_env * gamma_power
                 per_env_step_count += 1
 
+            # Simplified: no debug fall metrics tracking
+
             # On done envs, finalize episodic returns
             if len(done_indices) > 0:
                 # done_indices contains the environment indices that are done
                 for idx in done_indices:
-                    episode_returns.append(float(per_env_return[idx].item()))
-                    discounted_returns.append(float(per_env_discounted_return[idx].item()))
+                    ep_len = int(per_env_step_count[idx].item())
+                    episode_lengths_steps_raw.append(ep_len)
+                    # Accept or ignore based on min-episode-steps
+                    if ep_len >= args_cli.min_episode_steps:
+                        episode_returns.append(float(per_env_return[idx].item()))
+                        discounted_returns.append(float(per_env_discounted_return[idx].item()))
+                        episode_lengths_steps_acc.append(ep_len)
+                        per_env_episode_counts_acc[idx] += 1
+                        per_env_episode_lengths_acc[int(idx)].append(ep_len)
+                        done_episodes_acc += 1
+                    # Reset per-env accumulators
                     per_env_return[idx] = 0.0
                     per_env_discounted_return[idx] = 0.0
                     per_env_step_count[idx] = 0
-                done_episodes += len(done_indices)
+                # Update raw counts
+                per_env_episode_counts_raw[done_indices] += 1
+                done_episodes_raw += len(done_indices)
 
         # Optional real-time pacing
         if args_cli.real_time:
             sleep_time = dt - (time.time() - step_start)
             if sleep_time > 0:
                 time.sleep(sleep_time)
-        steps += 1
 
         # Progress log
-        if steps % 100 == 0:
+        current_steps = int(base_env.common_step_counter)
+        if current_steps % 100 == 0 and current_steps > 0:
             mean_total = total_reward_series[-1] if len(total_reward_series) > 0 else float("nan")
-            print(f"  step {steps:5d} | episodes: {done_episodes:4d}/{args_cli.epochs} | total_reward_mean: {mean_total:+.4f}")
+            min_ep = int(per_env_episode_counts_acc.min().item())
+            mean_ep = float(per_env_episode_counts_acc.float().mean().item())
+            print(
+                f"  step {current_steps:5d} | episodes/env: min={min_ep:2d}, mean={mean_ep:4.1f}/{episodes_per_env_target} | total_reward_mean: {mean_total:+.4f}"
+            )
 
     elapsed = time.time() - start_wall
-    print(f"\n[INFO] Analysis finished in {elapsed:.1f}s | steps: {steps} | episodes: {done_episodes}")
+    print(
+        f"\n[INFO] Analysis finished in {elapsed:.1f}s | steps: {int(base_env.common_step_counter)} | episodes (accepted/raw): {done_episodes_acc}/{done_episodes_raw}"
+    )
 
     # --- Summaries ---
     print("\n" + "=" * 100)
     print("REWARD TERM STATISTICS (per-step means over time)")
+    print("Note: Values shown are weighted term contributions as provided by the environment's reward manager.")
+    print("      The total reward equals the sum of these weighted terms (no extra weighting applied here).")
     print("=" * 100)
 
     # Calculate column widths for better alignment
@@ -341,30 +410,65 @@ def main():
     for k, v in disc_stats.items():
         print(f"{k.upper():<8}: {v:+15.4f}")
 
+    # TensorBoard training metric (Option B)
+    tb_metric = _read_tb_training_metric(log_dir)
+    if tb_metric:
+        print("\n" + "=" * 60)
+        print("TRAINING METRIC (TensorBoard)")
+        print("=" * 60)
+        print(f"{tb_metric['tag']}: {tb_metric['value']:+.7f}  (训练计分指标，非环境内奖励)")
+
     # Additional analysis
     if len(episode_returns) > 0:
-        avg_episode_length = len(total_reward_series) / len(episode_returns) if len(episode_returns) > 0 else 0
+        # Compute average episode length from accepted per-episode lengths (per env)
+        avg_episode_length = (sum(episode_lengths_steps_acc) / len(episode_lengths_steps_acc)) if len(episode_lengths_steps_acc) > 0 else 0
         print(f"\nADDITIONAL INFO:")
-        print(f"Episodes analyzed    : {len(episode_returns)}")
-        print(f"Total steps          : {len(total_reward_series)}")
-        print(f"Avg episode length   : {avg_episode_length:.1f} steps")
+        print(f"Episodes analyzed    : {len(episode_returns)} (accepted)")
+        print(f"Episodes (raw)       : {done_episodes_raw}; ignored (<{args_cli.min_episode_steps} steps): {done_episodes_raw - done_episodes_acc}")
+        print(f"Total steps          : {int(base_env.common_step_counter)}")
+        print(f"Avg episode length   : {avg_episode_length:.1f} steps (per env)")
+        if episodes_per_env_target is not None:
+            min_ep = int(per_env_episode_counts_acc.min().item())
+            max_ep = int(per_env_episode_counts_acc.max().item())
+            mean_ep = float(per_env_episode_counts_acc.float().mean().item())
+            print(f"Episodes per env     : min={min_ep}, mean={mean_ep:.2f}, max={max_ep} (target={episodes_per_env_target})")
+            # For small num_envs, print the full per-env vector for clarity
+            if base_env.num_envs <= 32:
+                print(f"Episodes per env vec : {per_env_episode_counts_acc.tolist()} (accepted)")
+        if args_cli.print_episode_lengths and base_env.num_envs <= 64:
+            print("Per-env accepted episode lengths (steps):")
+            for env_id, lens in enumerate(per_env_episode_lengths_acc):
+                if len(lens) > 0:
+                    print(f"  env[{env_id:02d}]: {lens}")
         print(f"Discount factor (γ)  : {args_cli.gamma}")
         if len(discounted_returns) > 0:
             discount_ratio = (sum(discounted_returns) / sum(episode_returns)) if sum(episode_returns) != 0 else 0
             print(f"Discounted/Raw ratio : {discount_ratio:.4f}")
 
+    # Debug: summarize fall metrics at termination
+    if track_fall_metrics and len(term_debug_dist_at_done) > 0:
+        dist_stats = _summarize_series(term_debug_dist_at_done)
+        dz_stats = _summarize_series(term_debug_dz_at_done)
+        print("\n[DEBUG] Termination metrics (distance from reset position):")
+        print(f"  DIST  -> mean: {dist_stats['mean']:.4f}, std: {dist_stats['std']:.4f}, min: {dist_stats['min']:.4f}, p50: {dist_stats['p50']:.4f}, p95: {dist_stats['p95']:.4f}, max: {dist_stats['max']:.4f}")
+        print(f"  |dz|  -> mean: {dz_stats['mean']:.4f}, std: {dz_stats['std']:.4f}, min: {dz_stats['min']:.4f}, p50: {dz_stats['p50']:.4f}, p95: {dz_stats['p95']:.4f}, max: {dz_stats['max']:.4f}")
+
     # Save JSON summary
     summary = {
         "task": args_cli.task,
         "checkpoint": resume_path,
-        "episodes_analyzed": int(done_episodes),
-        "steps": int(steps),
+        "episodes_analyzed": int(done_episodes_acc),
+        "episodes_raw": int(done_episodes_raw),
+        "min_episode_steps": int(args_cli.min_episode_steps),
+        "steps": int(base_env.common_step_counter),
         "per_term": table_rows,
         "total_per_step": total_stats,
         "episodic_returns": ep_stats,
         "discounted_returns": disc_stats,
         "gamma": args_cli.gamma,
     }
+    if tb_metric:
+        summary["tensorboard_training_metric"] = tb_metric
     json_path = os.path.join(out_dir, "reward_analysis.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
