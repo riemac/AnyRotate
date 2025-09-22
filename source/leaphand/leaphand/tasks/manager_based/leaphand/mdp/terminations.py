@@ -23,44 +23,48 @@ def object_falling_termination(
     fall_dist: float = 0.12,
     target_pos_offset: tuple[float, float, float] = (0.0, -0.1, 0.56)
 ) -> torch.Tensor:
-    """检查物体是否掉落
+    """检查物体是否掉落（物体位置先相对于env_origins再与目标位置比较）
 
-    Args:@
-        env: 环境实例
-        object_cfg: 物体资产配置
-        fall_dist: 掉落距离阈值
-        target_pos_offset: 目标位置偏移（相对于每个环境的原点）
+    计算步骤与原逻辑等价，但先将物体位置变换为相对于环境原点再计算距离。
 
+    Args:
+        env: ManagerBasedRLEnv - 环境实例
+        object_cfg: SceneEntityCfg - 物体资产配置（默认名为 "object"）
+        fall_dist: float - 距离阈值，超过则判定为掉落
+        target_pos_offset: tuple[float, float, float] - 目标位置相对于环境原点的偏移
     Returns:
-        物体掉落标志 (num_envs,)
+        torch.Tensor (bool) - 每个环境是否满足掉落/终止条件 (shape: [num_envs])
 
-    Note:
-        物体掉落判定基于欧氏距离计算:
-        1. 目标位置计算: target_pos = env_origins + offset
-        2. 物体与目标位置的距离: dist = ||object_pos - target_pos||₂
-        3. 掉落判定条件: dist ≥ fall_dist
-        
-        其中:
-        - ||·||₂ 表示L2范数(欧氏距离)
-        - object_pos ∈ ℝ³ 为物体当前位置
-        - target_pos ∈ ℝ³ 为目标位置
-        - fall_dist ∈ ℝ⁺ 为掉落阈值
+    NOTE:
+        令 object_pos_world 为物体在世界坐标系下的位置，env_origins 为每个环境的原点偏置，
+        则相对于环境原点的物体位置：
+            object_pos_rel = object_pos_world - env_origins
+
+        目标位置已以环境原点为参考：
+            target_pos = target_pos_offset
+
+        欧氏距离：
+            dist = || object_pos_rel - target_pos ||_2
+
+        掉落判定（终止）：
+            terminated = dist >= fall_dist
     """
-    # 获取物体资产
+    # 获取物体资产与世界坐标位置 (shape: [num_envs, 3])
     object_asset: RigidObject = env.scene[object_cfg.name]
+    object_pos_world = object_asset.data.root_pos_w
 
-    # 获取物体的世界坐标位置
-    object_pos = object_asset.data.root_pos_w
-
-    # 计算每个环境的目标位置（相对于环境原点）
-    # 使用场景中的环境原点位置
+    # 获取每个环境的原点 (shape: [num_envs, 3])
     env_origins = env.scene.env_origins
 
-    # 目标位置 = 环境原点 + 偏移
-    target_pos_offset_tensor = torch.tensor(target_pos_offset, device=env.device)
-    target_pos = env_origins + target_pos_offset_tensor.unsqueeze(0).expand(env.num_envs, -1)
+    # 将物体位置变为相对于环境原点的坐标
+    object_pos = object_pos_world - env_origins
 
-    # 计算物体与目标位置的距离
+    # 目标位置直接使用相对于环境原点的偏移，扩展到每个env
+    target_pos_offset_tensor = torch.tensor(
+        target_pos_offset, device=env.device, dtype=object_pos.dtype
+    )
+    target_pos = target_pos_offset_tensor.unsqueeze(0).expand(env.num_envs, -1)
+
+    # 计算欧氏距离并判断是否掉落
     object_dist = torch.norm(object_pos - target_pos, p=2, dim=-1)
-
     return object_dist >= fall_dist
