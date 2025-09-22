@@ -70,6 +70,10 @@ def object_falling_termination(
     return object_dist >= fall_dist
 
 
+###
+# 仿照LEAP_Hand_Sim的实现
+###
+
 def object_falling_z_termination(
     env: ManagerBasedRLEnv,
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),

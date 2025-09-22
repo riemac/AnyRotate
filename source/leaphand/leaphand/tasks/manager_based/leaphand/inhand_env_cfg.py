@@ -39,8 +39,8 @@ from . import mdp as leaphand_mdp
 from .mdp.commands import RotationAxisCommandCfg
 
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
-num_envs = 100
-horizon_length = 240
+# num_envs = 100
+# horizon_length = 240
 
 # 使用Isaac Lab内置的cube资产
 object_usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"
@@ -343,11 +343,11 @@ class TerminationsCfg:
 
     # 物体掉落终止
     object_falling = DoneTerm(
-        func=leaphand_mdp.object_falling_termination,
+        # 使用 z 轴高度差判定的终止函数，和 object_fall_penalty 的 z_threshold 逻辑保持一致
+        func=leaphand_mdp.object_falling_z_termination,
         params={
             "object_cfg": SceneEntityCfg("object"),
-            "fall_dist": 0.12,
-            "target_pos_offset": (0.0, -0.1, 0.56),
+            "z_threshold": 0.10,
         },
     )
 
@@ -477,7 +477,7 @@ class InHandEnvCfg(ManagerBasedRLEnvCfg):
     # 注意：字段名需为小写的 'scene' 以符合 ManagerBasedRLEnvCfg 的校验
     scene: InteractiveSceneCfg = InHandSceneCfg(num_envs=100, env_spacing=0.75, replicate_physics=False)
     decimation: int = 4
-    episode_length_s: float = 15.0
+    episode_length_s: float = 60.0
     viewer: ViewerCfg = ViewerCfg()
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 120,
