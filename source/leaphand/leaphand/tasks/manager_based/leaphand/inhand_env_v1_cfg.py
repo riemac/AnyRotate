@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """LeapHand连续旋转任务环境配置 - ManagerBasedRLEnv架构
-- 该配置类的奖励项将参考LEAP_Hand_Sim中的奖励项
+- 该配置类的奖励项将参考LEAP_Hand_Sim中的奖励项，并和先前自设的奖励项相结合
 """
 
 import math
@@ -278,25 +278,24 @@ class ObservationsCfg:
 @configclass
 class RewardsCfg:
     """奖励配置 - 连续旋转任务奖励机制"""
-    # rotate_visiualizer = RewTerm(  # 仅用于可视化实际旋转轴
-    #     func=leaphand_mdp.rotation_velocity,
-    #     weight=0.0,
+    # rotate_reward = RewTerm(
+    #     func=leaphand_mdp.rotate_angvel_clipped,
+    #     weight=1.25,
     #     params={
     #         "asset_cfg": SceneEntityCfg("object"),
-    #         "visualize_actual_axis": True,  # 启用实际旋转轴可视化
-    #         "target_angular_speed": 1,  # 目标角速度 (rad/s)
-    #         "positive_decay": 3.0,  # 正向奖励的指数衰减因子
-    #         "negative_penalty_weight": 0.5,  # 负向惩罚权重
+    #         "clip_min": -0.25,
+    #         "clip_max": 0.25,
     #     },
     # )
-
-    rotate_reward = RewTerm(
-        func=leaphand_mdp.rotate_angvel_clipped,
-        weight=1.25,
+    rotation_velocity = RewTerm(
+        func=leaphand_mdp.rotation_velocity,
+        weight=10.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
-            "clip_min": -0.25,
-            "clip_max": 0.25,
+            "visualize_actual_axis": True,  # 启用实际旋转轴可视化
+            "target_angular_speed": 1,   # 目标角速度 (rad/s)
+            "positive_decay": 3.0,        # 正向奖励的指数衰减因子
+            "negative_penalty_weight": 0.5,  # 负向惩罚权重
         },
     )
 
@@ -329,8 +328,8 @@ class RewardsCfg:
     )
 
     object_fall_penalty = RewTerm(
-        func=leaphand_mdp.object_fall_penalty, # TODO: 该项有些过低
-        weight=-10,
+        func=leaphand_mdp.object_fall_penalty, 
+        weight=-20,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "z_threshold": 0.10,
@@ -478,7 +477,7 @@ class CurriculumCfg:
 
 
 @configclass
-class InHandEnvCfg(ManagerBasedRLEnvCfg):
+class InHandV1EnvCfg(ManagerBasedRLEnvCfg):
     """LeapHand连续旋转任务环境配置类 - ManagerBasedRLEnv架构"""
     ui_window_class_type: type | None = ManagerBasedRLEnvWindow
     is_finite_horizon: bool = True
