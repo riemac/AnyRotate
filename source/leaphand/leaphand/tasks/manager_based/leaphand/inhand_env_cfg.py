@@ -322,7 +322,8 @@ class RewardsCfg:
 
     hand_work_penalty = RewTerm(
         func=leaphand_mdp.work_penalty,
-        weight=-1.0,
+        weight=-0.01,  # 🔥 修复：从-1.0降低到-0.01，减少对动作的过度抑制
+                       # 原来的-1.0权重导致策略学会使用极小的动作来避免功率惩罚
         params={
             "asset_cfg": SceneEntityCfg("robot"),
         },
@@ -433,6 +434,7 @@ class EventCfg: #
             "stiffness_distribution_params": (0.9, 1.1),
             "damping_distribution_params": (0.8, 1.2),
             "distribution": "uniform",
+            "operation": "scale",
         },
     )
 

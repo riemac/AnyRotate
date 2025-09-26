@@ -40,8 +40,7 @@ from . import mdp as leaphand_mdp
 from .mdp.commands import RotationAxisCommandCfg
 
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
-# num_envs = 100
-# horizon_length = 240
+horizon_length = 32
 
 # 使用Isaac Lab内置的cube资产
 object_usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"
@@ -163,12 +162,22 @@ class CommandsCfg:
  
 @configclass
 class ActionsCfg:
-    """Action specifications for the MDP."""
-    hand_joint_pos = mdp.RelativeJointPositionActionCfg(
+    # hand_joint_pos = mdp.RelativeJointPositionActionCfg(
+    #     asset_name="robot",
+    #     joint_names=["a_.*"],  # 所有手部关节
+    #     scale=1 / 1,  # 增量缩放因子：控制每步的最大位置变化量
+    #     use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
+    # )
+    hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
         asset_name="robot",
         joint_names=["a_.*"],  # 所有手部关节
-        scale=1 / 10,  # 增量缩放因子：控制每步的最大位置变化量
-        use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
+        scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
+        rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
+        alpha=1/1,  # 🔥 修复：EMA平滑系数从1.0改为0.1
+                     # alpha=1.0 → 无平滑，直接应用（动作不敏感的原因！）
+                     # alpha=0.1 → 当前动作10%权重，历史90%权重（强平滑但响应）
+                     # 参考：官方LeapHand使用 1/24≈0.042 (超强平滑)
+                     # 建议范围：0.05-0.2，值越小越平滑但响应越慢
     )
 
 
@@ -305,11 +314,14 @@ class RewardsCfg:
         params={"object_cfg": SceneEntityCfg("object")},
     )
 
-    pose_diff_penalty = RewTerm( # TODO：该项惩罚有些过高，后期应调整
-        func=leaphand_mdp.pose_diff_penalty,
-        weight=-0.02,
-        params={"asset_cfg": SceneEntityCfg("robot")},
-    )
+    # 🔥 临时禁用pose_diff_penalty进行测试
+    # pose_diff_penalty = RewTerm( # TODO：该项惩罚有些过高，后期应调整
+    #     func=leaphand_mdp.pose_diff_penalty,
+    #     weight=-0.001,  # 🔥 修复：从-0.02降低到-0.001，减少对关节运动的抑制
+    #                     # pose_diff_penalty惩罚关节偏离自然姿态，过高的权重导致策略不敢大幅度运动
+    #                     # 降低权重允许更大的动作幅度，同时保持基本的姿态约束
+    #     params={"asset_cfg": SceneEntityCfg("robot")},
+    # )
 
     hand_torque_penalty = RewTerm(
         func=mdp.joint_torques_l2,
@@ -319,13 +331,15 @@ class RewardsCfg:
         },
     )
 
-    hand_work_penalty = RewTerm(
-        func=leaphand_mdp.work_penalty,
-        weight=-1.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-        },
-    )
+    # hand_work_penalty = RewTerm(
+    #     func=leaphand_mdp.work_penalty,
+    #     weight=-0.01,  # 🔥 修复：从-1.0降低到-0.01，减少对动作的过度抑制
+    #                    # 原来的-1.0权重导致策略学会使用极小的动作来避免功率惩罚
+    #                    # 降低权重后允许更大的动作幅度，同时保持一定的平滑性约束
+    #     params={
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #     },
+    # )
 
     object_fall_penalty = RewTerm(
         func=leaphand_mdp.object_fall_penalty, 
@@ -432,6 +446,7 @@ class EventCfg: #
             "stiffness_distribution_params": (0.9, 1.1),
             "damping_distribution_params": (0.8, 1.2),
             "distribution": "uniform",
+            "operation": "scale",
         },
     )
 
@@ -465,19 +480,18 @@ class EventCfg: #
 @configclass
 class CurriculumCfg:
     """课程学习配置 - 提供各种课程学习策略"""
-    # pose_diff_penalty_weight = CurrTerm(
-    #     func=mdp.modify_reward_weight,
-    #     params={
-    #         "term_name": "pose_diff_penalty",
-    #         "weight": -0.02,
-    #         "num_steps": 300
-    #     }
-    # )
-    pass
+    pose_diff_penalty_weight = CurrTerm(
+        func=mdp.modify_reward_weight,
+        params={
+            "term_name": "pose_diff_penalty",
+            "weight": -0.02,
+            "num_steps": 300*horizon_length # 300个epochs后
+        }
+    )
 
 
 @configclass
-class InHandV1EnvCfg(ManagerBasedRLEnvCfg):
+class InHandEnvV1Cfg(ManagerBasedRLEnvCfg):
     """LeapHand连续旋转任务环境配置类 - ManagerBasedRLEnv架构"""
     ui_window_class_type: type | None = ManagerBasedRLEnvWindow
     is_finite_horizon: bool = True
