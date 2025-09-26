@@ -84,7 +84,9 @@ def rotation_velocity(
     # 1. 对于正向速度 (方向正确)
     #    我们使用指数衰减形式，鼓励逼近目标速度
     speed_error_positive = torch.abs(projected_velocity - target_angular_speed)
-    reward_positive = torch.exp(-positive_decay * speed_error_positive)
+    # 🔥 限制指数参数，防止exp()溢出
+    # exp_arg = torch.clamp(-positive_decay * speed_error_positive, min=-10.0, max=10.0)
+    # reward_positive = torch.exp(exp_arg)
 
     # 2. 对于负向速度 (方向错误)
     #    我们使用一个线性的惩罚项。速度越负，惩罚越大。
@@ -99,6 +101,10 @@ def rotation_velocity(
         reward_positive,
         reward_negative
     )
+
+    # 🔥 最终的NaN/Inf检查
+    # reward = torch.where(torch.isnan(reward) | torch.isinf(reward),
+    #                     torch.zeros_like(reward), reward)
 
     # 可视化实际旋转轴
     if visualize_actual_axis:
@@ -303,14 +309,23 @@ def rotation_axis_alignment_reward(
     # 计算实际旋转轴与目标旋转轴之间的夹角
     # 使用点积计算夹角：cos(theta) = a·b / (|a||b|)
     dot_product = torch.sum(axis * target_axis, dim=-1)
-    # 限制点积值在[-1, 1]范围内，避免数值误差
-    dot_product = torch.clamp(dot_product, -1.0, 1.0)
-    # 计算夹角
-    theta = torch.acos(dot_product)
+    # 🔥 更严格的数值稳定性处理
+    dot_product = torch.clamp(dot_product, -0.9999, 0.9999)  # 避免acos(±1)的数值问题
+
+    # 🔥 安全的角度计算，处理无效旋转的情况
+    theta = torch.where(
+        valid_rotation,
+        torch.acos(torch.abs(dot_product)),  # 只计算绝对值的角度，避免方向问题
+        torch.zeros_like(dot_product)        # 无效旋转时角度为0
+    )
 
     # 计算指数衰减奖励
     angle_error = torch.clamp(theta - theta_tolerance, min=0.0)
     reward = torch.exp(-decay_factor * angle_error)
+
+    # 🔥 额外的NaN检查和处理
+    reward = torch.where(torch.isnan(reward) | torch.isinf(reward),
+                        torch.zeros_like(reward), reward)
 
     # 更新上一帧旋转（独立状态）
     env.last_object_rot_alignment[:] = current_object_rot.clone()
@@ -348,8 +363,13 @@ def grasp_reward(
     # 计算距离（在环境局部坐标系中）
     object_dist = torch.norm(object_pos - target_pos, p=2, dim=-1)
 
-    # 指数衰减奖励
-    reward = torch.exp(-10.0 * object_dist)
+    # 🔥 指数衰减奖励 - 限制指数参数防止溢出
+    exp_arg = torch.clamp(-10.0 * object_dist, min=-10.0, max=10.0)
+    reward = torch.exp(exp_arg)
+
+    # 🔥 NaN/Inf检查
+    reward = torch.where(torch.isnan(reward) | torch.isinf(reward),
+                        torch.zeros_like(reward), reward)
 
     return reward
 
