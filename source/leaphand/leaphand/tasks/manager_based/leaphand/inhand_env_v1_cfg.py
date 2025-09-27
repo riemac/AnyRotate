@@ -173,11 +173,7 @@ class ActionsCfg:
         joint_names=["a_.*"],  # 所有手部关节
         scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
         rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
-        alpha=1/1,  # 🔥 修复：EMA平滑系数从1.0改为0.1
-                     # alpha=1.0 → 无平滑，直接应用（动作不敏感的原因！）
-                     # alpha=0.1 → 当前动作10%权重，历史90%权重（强平滑但响应）
-                     # 参考：官方LeapHand使用 1/24≈0.042 (超强平滑)
-                     # 建议范围：0.05-0.2，值越小越平滑但响应越慢
+        alpha=1/10,  # 平滑系数
     )
 
 
@@ -314,14 +310,11 @@ class RewardsCfg:
         params={"object_cfg": SceneEntityCfg("object")},
     )
 
-    # 🔥 临时禁用pose_diff_penalty进行测试
-    # pose_diff_penalty = RewTerm( # TODO：该项惩罚有些过高，后期应调整
-    #     func=leaphand_mdp.pose_diff_penalty,
-    #     weight=-0.001,  # 🔥 修复：从-0.02降低到-0.001，减少对关节运动的抑制
-    #                     # pose_diff_penalty惩罚关节偏离自然姿态，过高的权重导致策略不敢大幅度运动
-    #                     # 降低权重允许更大的动作幅度，同时保持基本的姿态约束
-    #     params={"asset_cfg": SceneEntityCfg("robot")},
-    # )
+    pose_diff_penalty = RewTerm( # TODO：该项惩罚有些过高，后期应调整
+        func=leaphand_mdp.pose_diff_penalty,
+        weight=-0.1,  
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
 
     hand_torque_penalty = RewTerm(
         func=mdp.joint_torques_l2,
@@ -331,15 +324,13 @@ class RewardsCfg:
         },
     )
 
-    # hand_work_penalty = RewTerm(
-    #     func=leaphand_mdp.work_penalty,
-    #     weight=-0.01,  # 🔥 修复：从-1.0降低到-0.01，减少对动作的过度抑制
-    #                    # 原来的-1.0权重导致策略学会使用极小的动作来避免功率惩罚
-    #                    # 降低权重后允许更大的动作幅度，同时保持一定的平滑性约束
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot"),
-    #     },
-    # )
+    hand_work_penalty = RewTerm(
+        func=leaphand_mdp.work_penalty,
+        weight=-0.01,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
 
     object_fall_penalty = RewTerm(
         func=leaphand_mdp.object_fall_penalty, 

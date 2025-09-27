@@ -37,8 +37,8 @@ params:
           name: default            # 使用默认初始化方法
         sigma_init:
           name: const_initializer
-          val: -1.0              # 初始logstd=-1 -> std≈0.37，提供温和探索
-        fixed_sigma: False        # 允许学习/探索
+          val: -1.0              # 更保守：初始logstd=-2 -> std≈0.14
+        fixed_sigma: True         # 修复：使用固定标准差避免std=0（当logstd趋近于-∞时）
     
     # MLP网络配置
     mlp:

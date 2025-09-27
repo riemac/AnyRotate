@@ -46,7 +46,7 @@ leaphand/                    # 个人Leaphand项目根目录
 │       │   │   └── leap.py
 │       │   ├── tasks/      # 任务环境定义
 │       │   │   ├── direct/leaphand/   # DirectRLEnv
-│       │   │   └── manager_based/leaphand/   # ManagerBasedRLEnv
+│       │   │   └── manager_based/leaphand/   # ManagerBasedRLEnv（目前主要开发目录）
 │       └── pyproject.toml   # Python 项目配置
 ├── logs/                    # 日志目录
 └── outputs/                 # 输出目录
@@ -109,6 +109,8 @@ LEAP_Hand_Sim/               # 早期基于isaacgym的LeapHand官方手内旋转
   from leaphand.tasks.direct.leaphand.leaphand_env import LeaphandEnv
   from leaphand.tasks.direct.leaphand.leaphand_env_cfg import LeaphandEnvCfg
   ```
+* **环境步数:**
+  ManagerBasedRLEnv 的 `common_step_counter` 是针对所有环境的共同步数，不是单独环境步数×环境数。在课程学习中需注意区分。
 
 ### 个人偏好
 
@@ -131,7 +133,7 @@ LEAP_Hand_Sim/               # 早期基于isaacgym的LeapHand官方手内旋转
     Returns:
         旋转速度奖励 (num_envs,)
 
-    NOTE:
+    Note:
         旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
         物体旋转时的旋转轴和Body Frame的表示无关
         奖励公式：

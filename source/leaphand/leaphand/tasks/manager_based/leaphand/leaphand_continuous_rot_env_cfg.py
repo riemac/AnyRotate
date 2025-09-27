@@ -31,6 +31,7 @@ import isaaclab.envs.mdp as mdp
 from leaphand.robots.leap import LEAP_HAND_CFG
 from . import mdp as leaphand_mdp
 from .mdp.commands import RotationAxisCommandCfg
+from .mdp.dynamic_scale_actions import DynamicScaleRelativeJointPositionActionCfg
 
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
 num_envs = 100
@@ -172,25 +173,51 @@ class ActionsCfg:
     # )
 
     # 方案2：EMA指数移动平均平滑控制（推荐 - 类似官方LeapHand的绝对控制+平滑）
-    # hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
-    #     asset_name="robot",
-    #     joint_names=["a_.*"],  # 所有手部关节
-    #     scale=1.0,  # 动作缩放因子
-    #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
-    #     alpha=1/24,  # EMA平滑系数：0.1表示当前动作10%权重，历史90%权重（强平滑）
-    #                 # 参考：官方LeapHand使用 1/24≈0.042 (超强平滑) 或者一开始抖动，后面慢慢平滑？
-    #                 # 建议范围：0.05-0.2，值越小越平滑但响应越慢
-    # )
-
-    # 方案3：相对位置增量控制（天然平滑 - 类似官方LeapHand的相对控制）
-    hand_joint_pos = mdp.RelativeJointPositionActionCfg(
+    hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
         asset_name="robot",
         joint_names=["a_.*"],  # 所有手部关节
-        scale=1/24,  # 增量缩放因子：控制每步的最大位置变化量
-                     # 参考：官方LeapHand相对模式使用很小的增量
-                     # 建议范围：0.01-0.1，值越小动作越平滑但学习越慢
-        use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
+        scale=1.0,  # 动作缩放因子
+        rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
+        alpha=1/24,  # EMA平滑系数：0.1表示当前动作10%权重，历史90%权重（强平滑）
+                    # 参考：官方LeapHand使用 1/24≈0.042 (超强平滑) 或者一开始抖动，后面慢慢平滑？
+                    # 建议范围：0.05-0.2，值越小越平滑但响应越慢
     )
+
+    # 方案3：相对位置增量控制（天然平滑 - 类似官方LeapHand的相对控制）
+    # hand_joint_pos = mdp.RelativeJointPositionActionCfg(
+    #     asset_name="robot",
+    #     joint_names=["a_.*"],  # 所有手部关节
+    #     scale=1/24,  # 增量缩放因子：控制每步的最大位置变化量
+    #                  # 参考：官方LeapHand相对模式使用很小的增量
+    #                  # 建议范围：0.01-0.1，值越小动作越平滑但学习越慢
+    #     use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
+    # )
+
+
+# @configclass
+# class DynamicScaleActionsCfg:
+#     """动态缩放动作配置 - 使用自定义的动态缩放ActionTerm
+
+#     这个配置使用自定义的DynamicScaleRelativeJointPositionAction，
+#     可以在训练过程中自动调整动作的缩放因子，解决探索与利用的平衡问题。
+#     """
+
+#     # 手部关节位置控制 - 带动态缩放因子的相对位置增量控制
+#     hand_joint_pos = DynamicScaleRelativeJointPositionActionCfg(
+#         asset_name="robot",
+#         joint_names=["a_.*"],  # 所有手部关节
+#         scale=0.1,  # 初始缩放因子（会被动态调整覆盖）
+#         use_zero_offset=True,  # 使用零偏移（相对位置控制）
+
+#         # 动态缩放参数
+#         scale_strategy="linear",  # 线性衰减策略
+#         alpha_max=0.15,          # 起始缩放因子（较大值，利于前期探索）
+#         alpha_min=0.05,          # 终止缩放因子（较小值，利于后期精细控制）
+#         start_step=0,            # 立即开始调整
+#         end_step=100000,         # 10万步完成调整
+#         decay_rate=3.0,          # 指数衰减率（仅用于exponential策略）
+#         debug_interval=10000,    # 每10000步输出一次调试信息
+#     )
 
 
 @configclass
@@ -454,6 +481,21 @@ class EventCfg:
 @configclass
 class CurriculumCfg:
     """课程学习配置 - 提供各种课程学习策略"""
+
+    # 动作缩放因子调整课程学习 - 基于RL训练epoch边界调整，解决探索与利用平衡问题
+    # action_scale_factor = CurrTerm(
+    #     func=leaphand_mdp.modify_action_scale_factor_rl_epoch_based,  # 使用基于RL epoch的函数
+    #     params={
+    #         "action_term_name": "hand_joint_pos",  # 动作项名称
+    #         "alpha_max": 0.15,        # 起始值：较大，利于前期探索
+    #         "alpha_min": 0.05,        # 终止值：较小，利于后期精细控制
+    #         "start_epoch": 0,         # 立即开始调整
+    #         "end_epoch": 10,          # 10个RL epoch完成调整
+    #         "epoch_interval": 1,      # 每个epoch都调整
+    #         "horizon_length": horizon_length,  # episode长度
+    #         "num_envs": num_envs      # 环境数量
+    #     }
+    # )
     
 
     # 奖励权重调整课程学习
@@ -690,5 +732,70 @@ class LeaphandContinuousRotEnvCfg(ManagerBasedRLEnvCfg):
 # 课程学习配置变体
 ##
 
+@configclass
+class ActionScaleCurriculumCfg:
+    """动作缩放因子调整的课程学习配置 - 专门解决探索与利用平衡问题"""
 
+    # 保守型调整：缓慢递减，适合稳定训练 - 基于epoch边界
+    conservative_action_scale = CurrTerm(
+        func=leaphand_mdp.modify_action_scale_factor_rl_epoch_based,
+        params={
+            "action_term_name": "hand_joint_pos",
+            "alpha_max": 0.4,        # 起始值：中等大小
+            "alpha_min": 0.1,        # 终止值：中等大小
+            "min_epochs": 0,          # 5个epoch后开始调整
+            "max_epochs": 10,        # 100个epoch完成调整
+            "epoch_interval": 1,      # 每5个epoch调整一次
+            "horizon_length": horizon_length,
+            "num_envs": num_envs
+        }
+    )
+
+##
+# 环境配置变体 - 不同的课程学习策略
+##
+
+# @configclass
+# class LeaphandContinuousRotDynamicScaleEnvCfg(LeaphandContinuousRotEnvCfg):
+#     """LeapHand连续旋转任务环境配置 - 使用动态缩放ActionTerm
+
+#     这个配置使用自定义的DynamicScaleRelativeJointPositionAction，
+#     不依赖课程学习框架，在每一步都检查并调整动作缩放因子。
+#     """
+
+#     # 使用动态缩放动作配置
+#     actions: DynamicScaleActionsCfg = DynamicScaleActionsCfg()
+
+#     # 不需要课程学习配置（动态缩放在ActionTerm内部实现）
+#     curriculum: None = None
+
+
+@configclass
+class LeaphandContinuousRotActionScaleEnvCfg(LeaphandContinuousRotEnvCfg):
+    """LeapHand连续旋转任务环境配置 - 包含动作缩放因子动态调整（旧版本，使用课程学习）
+
+    这个配置变体专门用于测试和使用动作增量因子的动态调整功能。
+    解决了固定缩放因子导致的前期探索不足和后期精细控制欠佳的问题。
+
+    特性：
+    - 动作缩放因子从0.15线性递减到0.05
+    - 在10个训练轮次内完成递减过程
+    - 前期利于探索，后期利于精细控制
+    """
+
+    # 使用包含动作缩放因子调整的课程学习配置
+    curriculum: CurriculumCfg = CurriculumCfg()
+
+
+@configclass
+class LeaphandContinuousRotConservativeScaleEnvCfg(LeaphandContinuousRotEnvCfg):
+    """LeapHand连续旋转任务环境配置 - 保守型动作缩放调整
+
+    使用保守的动作缩放因子调整策略，适合稳定训练：
+    - 缓慢递减：从0.12到0.08
+    - 延迟启动：20轮次后开始
+    - 长期调整：150轮次完成
+    """
+
+    curriculum: ActionScaleCurriculumCfg = ActionScaleCurriculumCfg()
 
