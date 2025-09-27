@@ -34,6 +34,9 @@ class LinearDecayRelativeJointPositionActionCfg(RelativeJointPositionActionCfg):
     init_epochs: int = 0
     end_epochs: int = 100
 
+    # epoch 长度
+    horizon_length: int = 32
+
 
 @configclass
 class LinearDecayAlphaEMAJointPositionToLimitsActionCfg(EMAJointPositionToLimitsActionCfg):
@@ -56,4 +59,7 @@ class LinearDecayAlphaEMAJointPositionToLimitsActionCfg(EMAJointPositionToLimits
     final_alpha: float = 0.1
     init_epochs: int = 0
     end_epochs: int = 100
+    #  epoch 长度
+    horizon_length: int = 32
+
 

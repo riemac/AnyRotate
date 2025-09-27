@@ -38,6 +38,16 @@ class AbstractDynamicScaleRelativeJointPositionAction(RelativeJointPositionActio
         # 覆写父类解析得到的 scale（如果有），使用动态缩放因子
         self._scale = self._current_scale_factor
 
+        # 读取 horizon_length（必须 >0）
+        self._horizon_length = int(getattr(cfg, "horizon_length", 32))
+        if self._horizon_length <= 0:
+            raise ValueError("horizon_length 必须为正整数")
+        # 记录上次已更新的 epoch（初始为 -1，确保首步会更新）
+        self._last_epoch = -1
+        # 选择计数来源：优先环境计数器，否则内部计数器
+        self._use_env_counter = hasattr(self._env, "common_step_counter")
+        self._internal_step_counter = 0
+
     @property
     def current_scale_factor(self) -> float:
         """当前生效的缩放因子。"""
@@ -61,6 +71,28 @@ class AbstractDynamicScaleRelativeJointPositionAction(RelativeJointPositionActio
         """
         raise NotImplementedError
 
+
+    def process_actions(self, actions):
+        """
+        在每个环境步自动检查并更新缩放因子，然后执行标准动作预处理。
+
+        Args:
+            actions: 输入动作张量，形状 (num_envs, action_dim)。
+        """
+        # 1) 计算当前 step 与 epoch（优先使用环境计数器）
+        step_count = getattr(self._env, "common_step_counter", None) if self._use_env_counter else None
+        if step_count is None:
+            step_count = self._internal_step_counter
+        epoch = step_count // self._horizon_length
+        # 2) 在 epoch 边界触发缩放因子更新
+        if epoch != self._last_epoch:
+            self.update_scale_factor(epoch)
+            self._last_epoch = epoch
+        # 3) 执行父类的预处理（会使用更新后的 self._scale）
+        super().process_actions(actions)
+        # 4) 若使用内部计数器，则步进一次
+        if not self._use_env_counter:
+            self._internal_step_counter += 1
 
 class LinearDecayRelativeJointPositionAction(AbstractDynamicScaleRelativeJointPositionAction):
     """线性递减的相对关节位置动作。
