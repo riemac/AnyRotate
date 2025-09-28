@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import torch
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
@@ -622,3 +622,144 @@ def object_fall_penalty(
 
     # 如果距离超过阈值，返回惩罚
     return torch.where(dz > z_threshold, torch.ones_like(dz), torch.zeros_like(dz))
+
+
+class ContinuousRotationSparseReward:
+    """连续旋转目标达成的稀疏奖励（可状态化实现）。
+
+    将原本在 ``env`` 上维护的 ``q_last``、累计奖励等变量移动到类实例中，
+    便于在不同环境或配置之间复用同一个奖励对象。
+    """
+
+    def __init__(
+        self,
+        asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+        theta_goal: float = 1.0471975512,
+        additive_reward: float = 0.0,
+    ) -> None:
+        self.asset_cfg = asset_cfg
+        self.theta_goal = float(theta_goal)
+        self.additive_reward = float(additive_reward)
+
+        self._q_last: torch.Tensor | None = None
+        self._next_reward: torch.Tensor | None = None
+        self._count: torch.Tensor | None = None
+        self._episode_length_prev: torch.Tensor | None = None
+
+    def reset(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor | Sequence[int] | None = None) -> None:
+        """手动重置内部状态，可在环境重置钩子中调用。"""
+
+        if self._q_last is None:
+            return
+
+        mask = torch.ones(self._q_last.shape[0], dtype=torch.bool, device=self._q_last.device)
+        if env_ids is not None:
+            mask = torch.zeros_like(mask)
+            env_ids = torch.as_tensor(env_ids, device=self._q_last.device, dtype=torch.long)
+            mask[env_ids] = True
+
+        self._apply_reset(env, mask)
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        asset_cfg: SceneEntityCfg | None = None,
+        theta_goal: float | None = None,
+        additive_reward: float | None = None,
+    ) -> torch.Tensor:
+        current_asset_cfg = asset_cfg or self.asset_cfg
+        current_theta_goal = float(theta_goal if theta_goal is not None else self.theta_goal)
+        current_additive_reward = float(
+            additive_reward if additive_reward is not None else self.additive_reward
+        )
+
+        asset: RigidObject = env.scene[current_asset_cfg.name]
+        q_curr = asset.data.root_quat_w
+
+        self.asset_cfg = current_asset_cfg
+        self.theta_goal = current_theta_goal
+        self.additive_reward = current_additive_reward
+        self._ensure_buffers(env, q_curr)
+
+        reset_mask = self._compute_reset_mask(env)
+        if reset_mask is not None and torch.any(reset_mask):
+            self._apply_reset(env, reset_mask, q_curr=q_curr)
+
+        quat_diff = quat_mul(q_curr, quat_conjugate(self._q_last))  # type: ignore[arg-type]
+        w = torch.clamp(torch.abs(quat_diff[:, 0]), 0.0, 1.0)
+        theta = 2.0 * torch.acos(w)
+
+        success = theta >= current_theta_goal
+
+        reward = torch.zeros(env.num_envs, dtype=torch.float32, device=env.device)
+        if torch.any(success):
+            reward[success] = self._next_reward[success]  # type: ignore[index]
+            self._q_last[success] = q_curr[success]  # type: ignore[index]
+            self._count[success] += 1  # type: ignore[index]
+            self._next_reward[success] = self._next_reward[success] + current_additive_reward  # type: ignore[index]
+
+        return reward
+
+    # ------------------------------------------------------------------
+    # 内部辅助方法
+    # ------------------------------------------------------------------
+    def _ensure_buffers(self, env: ManagerBasedRLEnv, q_curr: torch.Tensor) -> None:
+        if (
+            self._q_last is None
+            or self._q_last.shape[0] != env.num_envs
+            or self._q_last.device != env.device
+            or self._q_last.dtype != q_curr.dtype
+        ):
+            self._q_last = q_curr.clone()
+            self._next_reward = torch.ones(env.num_envs, dtype=torch.float32, device=env.device)
+            self._count = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+            self._episode_length_prev = None
+
+    def _compute_reset_mask(self, env: ManagerBasedRLEnv) -> torch.Tensor | None:
+        mask: torch.Tensor | None = None
+
+        episode_len = getattr(env, "episode_length_buf", None)
+        if episode_len is not None:
+            if (
+                self._episode_length_prev is None
+                or self._episode_length_prev.shape != episode_len.shape
+                or self._episode_length_prev.device != episode_len.device
+            ):
+                mask_episode = torch.ones_like(episode_len, dtype=torch.bool, device=env.device)
+                self._episode_length_prev = episode_len.clone()
+            else:
+                mask_episode = (episode_len == 0) & (self._episode_length_prev != 0)
+                self._episode_length_prev.copy_(episode_len)
+            mask = mask_episode if mask is None else (mask | mask_episode)
+
+        reset_buf = getattr(env, "reset_buf", None)
+        if reset_buf is not None:
+            mask_reset = reset_buf.to(device=env.device)
+            mask_reset = mask_reset.to(dtype=torch.bool)
+            mask = mask_reset if mask is None else (mask | mask_reset)
+
+        return mask
+
+    def _apply_reset(
+        self,
+        env: ManagerBasedRLEnv,
+        mask: torch.Tensor,
+        q_curr: torch.Tensor | None = None,
+    ) -> None:
+        if self._q_last is None or not torch.any(mask):
+            return
+
+        if q_curr is None:
+            asset: RigidObject = env.scene[self.asset_cfg.name]
+            q_curr = asset.data.root_quat_w
+
+        self._q_last[mask] = q_curr[mask]
+        self._next_reward[mask] = 1.0
+        self._count[mask] = 0
+
+        if self._episode_length_prev is not None and self._episode_length_prev.shape == mask.shape:
+            self._episode_length_prev[mask] = 0
+
+
+# 兼容旧版接口：保留可调用实例名称。
+continuous_rotation_sparse = ContinuousRotationSparseReward()

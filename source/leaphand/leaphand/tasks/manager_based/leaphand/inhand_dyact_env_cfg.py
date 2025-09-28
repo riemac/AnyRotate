@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """LeapHand连续旋转任务环境配置 - ManagerBasedRLEnv架构
-- 该配置类的奖励项将参考LEAP_Hand_Sim中的奖励项，并和先前自设的奖励项相结合（连续旋转速度奖励）
+- 该配置类的奖项参考LEAP_Hand_Isaac_Lab，尽管任务不同
+- 主要增加一个连续旋转目标达成的稀疏奖励项
 """
 
 import math
