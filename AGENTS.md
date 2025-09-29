@@ -116,31 +116,26 @@ LEAP_Hand_Sim/               # 早期基于isaacgym的LeapHand官方手内旋转
 * **环境步数:**
   ManagerBasedRLEnv 的 `common_step_counter` 是针对所有环境的共同步数，不是单独环境步数×环境数。在课程学习中需注意区分。
 
+* **环境与管理器:**
+  ManagerBasedRLEnv 环境架构下，环境类及其各管理器已暴露大量可用属性和信息，开发过程中应优先复用这些现有资源，避免重复实现功能。
+  ManagerBasedRLENV 的各模块功能实现应self-contained，专注该模块的功能
+
 ### 个人偏好
 
 * **数理回复:**
   解释算法等机理性内容，结合数学公式。简洁美观的经渲染数学公式比大段文字和代码描述更易懂。
 
 * **注释风格:**
-  实现复杂方法时，在``` ```字符串中增加使用[Note:数学公式]来描述算法。如下所示
+  使用和IsaacLab官方一致的注释风格（Google Docstring Style）。实现复杂方法时，在``` ```字符串中增加使用 `Note` 部分来描述算法，通过数学公式（不要用latex，渲染不了）把主要逻辑从复杂的工程实现中精简抽象出来。如下所示：
     ```python
     """计算旋转速度奖励 - 目标是达到指定的角速度而非越快越好
-
-    Args:
-        env: ManagerBasedRLEnv - 环境实例
-        asset_cfg: SceneEntityCfg - 物体资产配置
-        visualize_actual_axis: bool - 是否可视化实际旋转轴
-        target_angular_speed: float - 目标角速度大小 (rad/s)
-        positive_decay: float - 正向奖励的指数衰减因子
-        negative_penalty_weight: float - 负向惩罚的权重系数
-
-    Returns:
-        旋转速度奖励 (num_envs,)
-
-    Note:
-        旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
-        物体旋转时的旋转轴和Body Frame的表示无关
-        奖励公式：
+    ...
+    Note
+    ----
+    旋转速度奖励公式
+      旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
+      物体旋转时的旋转轴和Body Frame的表示无关
+      奖励公式：
         - 正向速度: R = exp(-positive_decay * |projected_velocity - target_angular_speed|)
         - 负向速度: R = negative_penalty_weight * projected_velocity (负惩罚)
     """
@@ -153,6 +148,5 @@ LEAP_Hand_Sim/               # 早期基于isaacgym的LeapHand官方手内旋转
 
 * **代码隔离:** 绝不修改 IsaacLab 核心代码，开发在独立项目中进行。
 * **风格一致:** 代码与项目风格与 IsaacLab 保持一致。
-* **善用框架:** 优先利用 IsaacLab 现有功能，避免重复造轮子。
-
+* **善用框架:** 优先利用 IsaacLab 现有功能（包括类、方法、属性等信息），避免重复造轮子。
 

@@ -7,11 +7,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
 import torch
-from typing import TYPE_CHECKING, Sequence
 
 from isaaclab.assets import Articulation, RigidObject
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.utils.math import quat_conjugate, quat_mul, wrap_to_pi, quat_from_angle_axis
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG
@@ -41,10 +43,11 @@ def rotation_velocity(
     Returns:
         旋转速度奖励 (num_envs,)
 
-    NOTE:
+    Note
+    -------
         旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
         物体旋转时的旋转轴和Body Frame的表示无关
-
+        
         奖励公式：
         - 正向速度: R = exp(-positive_decay * |projected_velocity - target_angular_speed|)
         - 负向速度: R = negative_penalty_weight * projected_velocity (负惩罚)
@@ -85,8 +88,8 @@ def rotation_velocity(
     #    我们使用指数衰减形式，鼓励逼近目标速度
     speed_error_positive = torch.abs(projected_velocity - target_angular_speed)
     # 🔥 限制指数参数，防止exp()溢出
-    # exp_arg = torch.clamp(-positive_decay * speed_error_positive, min=-10.0, max=10.0)
-    # reward_positive = torch.exp(exp_arg)
+    exp_arg = torch.clamp(-positive_decay * speed_error_positive, min=-10.0, max=10.0)
+    reward_positive = torch.exp(exp_arg)
 
     # 2. 对于负向速度 (方向错误)
     #    我们使用一个线性的惩罚项。速度越负，惩罚越大。
@@ -246,7 +249,7 @@ def fingertip_distance_penalty(
         if len(body_indices) == 0:
             raise IndexError(f"Body not found: {body_name}")
         # 使用第一个匹配到的索引（Python int）
-        body_idx = int(body_indices[0])
+        body_idx = int(body_indices[0])        
         fingertip_pos_w = robot_asset.data.body_pos_w[:, body_idx]
         
         # 计算指尖到物体中心的距离
@@ -572,8 +575,8 @@ def work_penalty_squared(
     Returns:
         机械功惩罚 (num_envs,)
 
-    NOTE:
-        数学公式：[NOTE: w = (∑_j τ_j · q̇_j)^2 ]
+    Note:
+        数学公式：w = (∑_j τ_j · q̇_j)^2 
         其中τ_j为第j个关节的力矩，q̇_j为第j个关节的速度。
         该项鼓励在实现目标的同时降低做功（抑制无效挤压/抖动）。
     """
@@ -599,7 +602,7 @@ def object_fall_penalty(
     Returns:
         掉落惩罚 (num_envs,)，掉落时为1，否则为0
 
-    NOTE:
+    Note:
         惩罚公式：P = [|z - z_init| > threshold]
         其中z是当前物体高度，z_init是初始高度
         使用初始位置作为参考，避免手部移动导致的误判
@@ -624,41 +627,39 @@ def object_fall_penalty(
     return torch.where(dz > z_threshold, torch.ones_like(dz), torch.zeros_like(dz))
 
 
-class ContinuousRotationSparseReward:
-    """连续旋转目标达成的稀疏奖励（可状态化实现）。
+###
+#  参考LEAP_Hand_Isaac_Lab奖励项
+###
 
-    将原本在 ``env`` 上维护的 ``q_last``、累计奖励等变量移动到类实例中，
-    便于在不同环境或配置之间复用同一个奖励对象。
-    """
+class ContinuousRotationSparseReward(ManagerTermBase):
+    r"""连续旋转目标达成的稀疏奖励，兼容 ManagerBasedRLEnv 的标准重置流程。"""
 
-    def __init__(
-        self,
-        asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-        theta_goal: float = 1.0471975512,
-        additive_reward: float = 0.0,
-    ) -> None:
-        self.asset_cfg = asset_cfg
-        self.theta_goal = float(theta_goal)
-        self.additive_reward = float(additive_reward)
+    def __init__(self, cfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
 
-        self._q_last: torch.Tensor | None = None
-        self._next_reward: torch.Tensor | None = None
-        self._count: torch.Tensor | None = None
-        self._episode_length_prev: torch.Tensor | None = None
+        self.asset_cfg: SceneEntityCfg = cfg.params.get("asset_cfg", SceneEntityCfg("object"))
+        self._asset: RigidObject = env.scene[self.asset_cfg.name]
 
-    def reset(self, env: ManagerBasedRLEnv, env_ids: torch.Tensor | Sequence[int] | None = None) -> None:
-        """手动重置内部状态，可在环境重置钩子中调用。"""
+        self._theta_goal_default = float(cfg.params.get("theta_goal", 1.0471975512))
+        self._additive_reward_default = float(cfg.params.get("additive_reward", 0.0))
 
-        if self._q_last is None:
-            return
+        self._norm_eps = 1e-9
+        self._angle_eps = 1e-6
 
-        mask = torch.ones(self._q_last.shape[0], dtype=torch.bool, device=self._q_last.device)
-        if env_ids is not None:
-            mask = torch.zeros_like(mask)
-            env_ids = torch.as_tensor(env_ids, device=self._q_last.device, dtype=torch.long)
-            mask[env_ids] = True
+        self._reset_internal_buffers()
 
-        self._apply_reset(env, mask)
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        q_curr, default_quat = self._read_orientations()
+        self._ensure_buffers(q_curr, default_quat)
+
+        env_ids_tensor = self._normalize_env_ids(env_ids)
+        reference = self._resolve_reset_reference(default_quat, q_curr)
+
+        self._q_last[env_ids_tensor] = reference[env_ids_tensor]
+        self._next_reward[env_ids_tensor] = 1.0
+        self._count[env_ids_tensor] = 0
+        if self._default_quat_cache is not None:
+            self._default_quat_cache[env_ids_tensor] = default_quat[env_ids_tensor]
 
     def __call__(
         self,
@@ -667,99 +668,127 @@ class ContinuousRotationSparseReward:
         theta_goal: float | None = None,
         additive_reward: float | None = None,
     ) -> torch.Tensor:
-        current_asset_cfg = asset_cfg or self.asset_cfg
-        current_theta_goal = float(theta_goal if theta_goal is not None else self.theta_goal)
-        current_additive_reward = float(
-            additive_reward if additive_reward is not None else self.additive_reward
-        )
+        if env is not self._env:
+            raise ValueError("ContinuousRotationSparseReward 接收到的 env 与初始化时不一致")
 
-        asset: RigidObject = env.scene[current_asset_cfg.name]
-        q_curr = asset.data.root_quat_w
+        asset = self._asset if asset_cfg is None else env.scene[asset_cfg.name]
+        q_curr = asset.data.root_quat_w.to(device=self.device)
+        default_quat = asset.data.default_root_state[:, 3:7].to(device=self.device, dtype=q_curr.dtype)
 
-        self.asset_cfg = current_asset_cfg
-        self.theta_goal = current_theta_goal
-        self.additive_reward = current_additive_reward
-        self._ensure_buffers(env, q_curr)
+        self._ensure_buffers(q_curr, default_quat)
+        if self._default_quat_cache is not None:
+            self._default_quat_cache.copy_(default_quat)
 
-        reset_mask = self._compute_reset_mask(env)
-        if reset_mask is not None and torch.any(reset_mask):
-            self._apply_reset(env, reset_mask, q_curr=q_curr)
+        theta_threshold, additive = self._normalize_parameters(theta_goal, additive_reward)
+        target_axis = self._fetch_target_axis(q_curr.dtype)
 
-        quat_diff = quat_mul(q_curr, quat_conjugate(self._q_last))  # type: ignore[arg-type]
-        w = torch.clamp(torch.abs(quat_diff[:, 0]), 0.0, 1.0)
-        theta = 2.0 * torch.acos(w)
+        theta_signed, theta_abs = self._compute_signed_angle(q_curr, target_axis)
+        self._theta_signed = theta_signed
+        self._theta_abs = theta_abs
 
-        success = theta >= current_theta_goal
-
-        reward = torch.zeros(env.num_envs, dtype=torch.float32, device=env.device)
-        if torch.any(success):
-            reward[success] = self._next_reward[success]  # type: ignore[index]
-            self._q_last[success] = q_curr[success]  # type: ignore[index]
-            self._count[success] += 1  # type: ignore[index]
-            self._next_reward[success] = self._next_reward[success] + current_additive_reward  # type: ignore[index]
-
+        reward = self._apply_success(theta_signed >= theta_threshold, q_curr, additive)
         return reward
 
     # ------------------------------------------------------------------
-    # 内部辅助方法
+    # helpers
     # ------------------------------------------------------------------
-    def _ensure_buffers(self, env: ManagerBasedRLEnv, q_curr: torch.Tensor) -> None:
+
+    def _reset_internal_buffers(self) -> None:
+        self._q_last: torch.Tensor | None = None
+        self._next_reward: torch.Tensor | None = None
+        self._count: torch.Tensor | None = None
+        self._theta_signed: torch.Tensor | None = None
+        self._theta_abs: torch.Tensor | None = None
+        self._default_quat_cache: torch.Tensor | None = None
+
+    def _read_orientations(self) -> tuple[torch.Tensor, torch.Tensor]:
+        q_curr = self._asset.data.root_quat_w.to(device=self.device)
+        default_quat = self._asset.data.default_root_state[:, 3:7].to(device=self.device, dtype=q_curr.dtype)
+        return q_curr, default_quat
+
+    def _ensure_buffers(self, q_curr: torch.Tensor, default_quat: torch.Tensor) -> None:
         if (
             self._q_last is None
-            or self._q_last.shape[0] != env.num_envs
-            or self._q_last.device != env.device
+            or self._q_last.shape[0] != self.num_envs
+            or self._q_last.device != q_curr.device
             or self._q_last.dtype != q_curr.dtype
         ):
-            self._q_last = q_curr.clone()
-            self._next_reward = torch.ones(env.num_envs, dtype=torch.float32, device=env.device)
-            self._count = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
-            self._episode_length_prev = None
+            self._initialize_buffers(q_curr, default_quat)
 
-    def _compute_reset_mask(self, env: ManagerBasedRLEnv) -> torch.Tensor | None:
-        mask: torch.Tensor | None = None
+    def _initialize_buffers(self, q_curr: torch.Tensor, default_quat: torch.Tensor) -> None:
+        reference = self._resolve_reset_reference(default_quat, q_curr)
 
-        episode_len = getattr(env, "episode_length_buf", None)
-        if episode_len is not None:
-            if (
-                self._episode_length_prev is None
-                or self._episode_length_prev.shape != episode_len.shape
-                or self._episode_length_prev.device != episode_len.device
-            ):
-                mask_episode = torch.ones_like(episode_len, dtype=torch.bool, device=env.device)
-                self._episode_length_prev = episode_len.clone()
-            else:
-                mask_episode = (episode_len == 0) & (self._episode_length_prev != 0)
-                self._episode_length_prev.copy_(episode_len)
-            mask = mask_episode if mask is None else (mask | mask_episode)
+        self._q_last = reference.clone()
+        self._next_reward = torch.ones(self.num_envs, dtype=torch.float32, device=self.device)
+        self._count = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self._theta_signed = torch.zeros(self.num_envs, dtype=q_curr.dtype, device=self.device)
+        self._theta_abs = torch.zeros(self.num_envs, dtype=q_curr.dtype, device=self.device)
+        self._default_quat_cache = default_quat.clone()
 
-        reset_buf = getattr(env, "reset_buf", None)
-        if reset_buf is not None:
-            mask_reset = reset_buf.to(device=env.device)
-            mask_reset = mask_reset.to(dtype=torch.bool)
-            mask = mask_reset if mask is None else (mask | mask_reset)
+    def _normalize_env_ids(self, env_ids: Sequence[int] | torch.Tensor | None) -> torch.Tensor:
+        if env_ids is None:
+            return torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+        if isinstance(env_ids, torch.Tensor):
+            return env_ids.to(device=self.device, dtype=torch.long)
+        return torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
 
-        return mask
+    def _resolve_reset_reference(self, default_quat: torch.Tensor, q_curr: torch.Tensor) -> torch.Tensor:
+        default_norm = default_quat / torch.linalg.norm(default_quat, dim=-1, keepdim=True).clamp_min(self._norm_eps)
+        current_norm = q_curr / torch.linalg.norm(q_curr, dim=-1, keepdim=True).clamp_min(self._norm_eps)
 
-    def _apply_reset(
+        alignment = torch.sum(default_norm * current_norm, dim=-1, keepdim=True).abs()
+        same_pose = alignment >= (1.0 - 1e-4)
+        return torch.where(same_pose, default_norm, current_norm)
+
+    def _normalize_parameters(self, theta_goal: float | None, additive_reward: float | None) -> tuple[float, float]:
+        resolved_theta = self._theta_goal_default if theta_goal is None else float(theta_goal)
+        resolved_additive = self._additive_reward_default if additive_reward is None else float(additive_reward)
+        return resolved_theta, resolved_additive
+
+    def _fetch_target_axis(self, dtype: torch.dtype) -> torch.Tensor:
+        if not hasattr(self._env, "command_manager"):
+            raise AttributeError("ContinuousRotationSparseReward 需要 command_manager 提供 rotation_axis")
+
+        rotation_axis = self._env.command_manager.get_command("rotation_axis")
+        if rotation_axis is None:
+            raise ValueError("command_manager.get_command('rotation_axis') 返回 None")
+
+        rotation_axis = rotation_axis.to(device=self.device, dtype=dtype)
+        axis_norm = torch.linalg.norm(rotation_axis, dim=-1, keepdim=True).clamp_min(self._angle_eps)
+        return rotation_axis / axis_norm
+
+    def _compute_signed_angle(
         self,
-        env: ManagerBasedRLEnv,
-        mask: torch.Tensor,
-        q_curr: torch.Tensor | None = None,
-    ) -> None:
-        if self._q_last is None or not torch.any(mask):
-            return
+        q_curr: torch.Tensor,
+        target_axis: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        quat_diff = quat_mul(q_curr, quat_conjugate(self._q_last))  # type: ignore[arg-type]
+        quat_diff = quat_diff / torch.linalg.norm(quat_diff, dim=-1, keepdim=True).clamp_min(self._norm_eps)
+        quat_diff = torch.where((quat_diff[:, 0] < 0.0).unsqueeze(-1), -quat_diff, quat_diff)
 
-        if q_curr is None:
-            asset: RigidObject = env.scene[self.asset_cfg.name]
-            q_curr = asset.data.root_quat_w
+        vector_part = quat_diff[:, 1:]
+        vector_norm = torch.linalg.norm(vector_part, dim=-1, keepdim=True)
+        w = torch.clamp(quat_diff[:, 0], -1.0, 1.0)
+        theta = 2.0 * torch.atan2(vector_norm.squeeze(-1), w)
 
-        self._q_last[mask] = q_curr[mask]
-        self._next_reward[mask] = 1.0
-        self._count[mask] = 0
+        axis = torch.where(vector_norm > self._angle_eps, vector_part / vector_norm, target_axis)
+        rot_vec = axis * theta.unsqueeze(-1)
+        theta_signed = torch.sum(rot_vec * target_axis, dim=-1)
 
-        if self._episode_length_prev is not None and self._episode_length_prev.shape == mask.shape:
-            self._episode_length_prev[mask] = 0
+        return theta_signed, torch.abs(theta_signed)
+
+    def _apply_success(
+        self,
+        success: torch.Tensor,
+        q_curr: torch.Tensor,
+        additive_reward: float,
+    ) -> torch.Tensor:
+        reward = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        if torch.any(success):
+            reward[success] = self._next_reward[success]
+            self._q_last[success] = q_curr[success]
+            self._count[success] += 1
+            self._next_reward[success] = self._next_reward[success] + additive_reward
+        return reward
 
 
-# 兼容旧版接口：保留可调用实例名称。
-continuous_rotation_sparse = ContinuousRotationSparseReward()

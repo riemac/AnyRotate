@@ -468,6 +468,16 @@ class EventCfg: #
         },
     )
 
+    randomized_object_reset_pose = EventTerm(
+        func=mdp.reset_root_state_with_random_orientation,
+        mode="reset",
+        min_step_count_between_reset=720,
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (0, 0.01)},
+        },
+    )
+
 
 @configclass
 class CurriculumCfg:
@@ -477,8 +487,8 @@ class CurriculumCfg:
         params={
             "term_name": "pose_diff_penalty",
             "weight": -0.02,
-            "num_steps": 300*horizon_length # 300个epochs后
-        }
+            "num_steps": 300 * horizon_length,  # 300个epochs后
+        },
     )
 
 

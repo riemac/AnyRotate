@@ -21,14 +21,14 @@
 
    * **信息源:** 不分先后，具情况选用
 
-     1. 本地代码（IsaacLab 源码、项目文档、示例，使用`codebase`工具）。
-     2. 官方文档（`context7` 工具）。
+     1. 本地代码（IsaacLab 源码、项目文档、示例，使用`codebase`检索工具）。
+     2. 官方文档（`context7` 工具，当查询isaacsim, physx, torchrl, rl_games等第三方库）。
      3. 网络搜索（`github`, `fetch`工具）。
 
 ## 工作区结构
 
 ```bash
-leaphand/                    # 项目根目录
+leaphand/                    # 个人Leaphand项目根目录
 ├── scripts/                 # 脚本目录
 │   ├── debug/              # 调试脚本目录
 │   ├── demo/               # 演示脚本目录
@@ -46,7 +46,7 @@ leaphand/                    # 项目根目录
 │       │   │   └── leap.py
 │       │   ├── tasks/      # 任务环境定义
 │       │   │   ├── direct/leaphand/   # DirectRLEnv
-│       │   │   └── manager_based/leaphand/   # ManagerBasedRLEnv
+│       │   │   └── manager_based/leaphand/   # ManagerBasedRLEnv（目前主要开发目录）
 │       └── pyproject.toml   # Python 项目配置
 ├── logs/                    # 日志目录
 └── outputs/                 # 输出目录
@@ -79,9 +79,12 @@ LEAP_Hand_Sim/               # 早期基于isaacgym的LeapHand官方手内旋转
 
 ### 文档管理
 
+* 非必要情况不需新增文档。
 * 所有项目文档统一存放在 `source/leaphand/docs/` 目录。
 
 ## 注意事项
+
+### 操作要求
 
 * **环境激活:**
   执行终端指令前，必须在 `~/isaac` 目录下激活 uv 环境：
@@ -93,7 +96,10 @@ LEAP_Hand_Sim/               # 早期基于isaacgym的LeapHand官方手内旋转
 * **反馈增强:**
   `mcp-feedback-enhanced` 遇到超时/失败时，必须再次调用。
 
-## 常见问题
+* **注释Prompt:**
+  文件中如有以 `Prompt:` 标注的注释，需将其内容视为提示词要求的一部分严格遵循。
+
+### 工程问题
 
 * **环境原点偏置:**
   多环境并行训练时，每个环境实例有自己的原点偏置 (`env_origins`)。开发时需要考虑这个偏置对位置、姿态等计算的影响。
@@ -107,11 +113,39 @@ LEAP_Hand_Sim/               # 早期基于isaacgym的LeapHand官方手内旋转
   from leaphand.tasks.direct.leaphand.leaphand_env import LeaphandEnv
   from leaphand.tasks.direct.leaphand.leaphand_env_cfg import LeaphandEnvCfg
   ```
+* **环境步数:**
+  ManagerBasedRLEnv 的 `common_step_counter` 是针对所有环境的共同步数，不是单独环境步数×环境数。在课程学习中需注意区分。
+
+* **环境与管理器:**
+  ManagerBasedRLEnv 环境架构下，环境类及其各管理器已暴露大量可用属性和信息，开发过程中应优先复用这些现有资源，避免重复实现功能。
+  ManagerBasedRLENV 的各模块功能实现应self-contained，专注该模块的功能
+
+### 个人偏好
+
+* **数理回复:**
+  解释算法等机理性内容，结合数学公式。简洁美观的经渲染数学公式比大段文字和代码描述更易懂。
+
+* **注释风格:**
+  使用和IsaacLab官方一致的注释风格（Google Docstring Style）。实现复杂方法时，在``` ```字符串中增加使用 `Note` 部分来描述算法，通过数学公式把主要逻辑从复杂的工程实现中精简抽象出来。如下所示：
+    ```python
+    """计算旋转速度奖励 - 目标是达到指定的角速度而非越快越好
+    ...
+    Note
+    ----
+        旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
+        物体旋转时的旋转轴和Body Frame的表示无关
+        奖励公式：
+        - 正向速度: R = exp(-positive_decay * |projected_velocity - target_angular_speed|)
+        - 负向速度: R = negative_penalty_weight * projected_velocity (负惩罚)
+    """
+    ```
+
+* **表格对比:**
+  总结涉及到众多复杂可比项或时，使用表格进行对比。
 
 ## 代码实践
 
 * **代码隔离:** 绝不修改 IsaacLab 核心代码，开发在独立项目中进行。
-* **风格一致:** 代码与注释风格与 IsaacLab 保持一致，对复杂方法实现注释"NOTE:[数学公式]"
-* **善用框架:** 优先利用 IsaacLab 现有功能，避免重复造轮子。
-
+* **风格一致:** 代码与项目风格与 IsaacLab 保持一致。
+* **善用框架:** 优先利用 IsaacLab 现有功能（包括类、方法、属性等信息），避免重复造轮子。
 

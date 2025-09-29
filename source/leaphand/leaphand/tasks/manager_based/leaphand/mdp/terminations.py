@@ -35,7 +35,7 @@ def object_falling_termination(
     Returns:
         torch.Tensor (bool) - 每个环境是否满足掉落/终止条件 (shape: [num_envs])
 
-    NOTE:
+    Note:
         令 object_pos_world 为物体在世界坐标系下的位置，env_origins 为每个环境的原点偏置，
         则相对于环境原点的物体位置：
             object_pos_rel = object_pos_world - env_origins
@@ -92,7 +92,7 @@ def object_falling_z_termination(
     Returns:
         torch.Tensor(bool) - 每个环境是否满足掉落/终止条件 (shape: [num_envs])
 
-    NOTE:
+    Note:
         - object_pos_w: 物体在世界坐标系下的位置，shape 为 (num_envs, 3)
         - env.scene.env_origins: 每个 env 的世界原点偏置，shape 为 (num_envs, 3)
         - object_pos = object_pos_w - env_origins 得到物体在环境局部坐标系下的位置

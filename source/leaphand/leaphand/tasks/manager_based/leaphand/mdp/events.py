@@ -160,3 +160,4 @@ def randomize_rigid_object_com(
     # 应用扰动到选定环境
     coms[env_ids] += noise
     obj.root_physx_view.set_coms(coms, env_ids)
+
