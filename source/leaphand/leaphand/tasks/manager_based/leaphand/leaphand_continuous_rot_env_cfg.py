@@ -31,7 +31,6 @@ import isaaclab.envs.mdp as mdp
 from leaphand.robots.leap import LEAP_HAND_CFG
 from . import mdp as leaphand_mdp
 from .mdp.commands import RotationAxisCommandCfg
-from .mdp.dynamic_scale_actions import DynamicScaleRelativeJointPositionActionCfg
 
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
 num_envs = 100

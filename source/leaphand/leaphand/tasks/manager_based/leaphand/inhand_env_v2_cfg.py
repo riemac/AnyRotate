@@ -42,6 +42,7 @@ from .mdp.commands import RotationAxisCommandCfg
 
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
 horizon_length = 32
+epochs_num = 4 # 与horizon_length配合以确定数据更新频率
 
 # 使用Isaac Lab内置的cube资产
 object_usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"
@@ -230,6 +231,7 @@ class ObservationsCfg:
             params={"period": 2.0},
         )
 
+        # 物体位置和旋转的特权观测
         object_pos_w = ObsTerm(
             func=mdp.root_pos_w,
             params={"asset_cfg": SceneEntityCfg("object")},
@@ -277,8 +279,8 @@ class ObservationsCfg:
         )
 
     # 观测组配置
-    policy: PolicyCfg = PolicyCfg(history_length=3)
-    critic: CriticCfg = CriticCfg(history_length=3)
+    policy: PolicyCfg = PolicyCfg(history_length=2)
+    critic: CriticCfg = CriticCfg(history_length=2)
 
 
 @configclass
@@ -372,7 +374,7 @@ class EventCfg: #
     randomized_object_mass = EventTerm(
         func=mdp.randomize_rigid_body_mass,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "mass_distribution_params": (0.25, 1.2),
@@ -384,7 +386,7 @@ class EventCfg: #
     randomized_object_com = EventTerm(
         func=leaphand_mdp.randomize_rigid_object_com,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "com_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (-0.01, 0.01)},
@@ -402,12 +404,12 @@ class EventCfg: #
 
     randomized_object_friction = EventTerm(
         func=mdp.randomize_rigid_body_material,
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "static_friction_range": (0.2, 0.8),  # 塑料、橡胶一般这么多
-            "dynamic_friction_range": (0.15, 0.5),
+            "dynamic_friction_range": (0.15, 0.6),
             "restitution_range": (0.0, 0.1),
             "num_buckets": 250,
             "make_consistent": True,  # 确保 dynamic_friction <= static_friction
@@ -416,7 +418,7 @@ class EventCfg: #
 
     randomized_hand_friction = EventTerm(
         func=mdp.randomize_joint_parameters,
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names="a_.*"),
@@ -432,7 +434,7 @@ class EventCfg: #
     randomized_actuator_gains = EventTerm(
         func=mdp.randomize_actuator_gains,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "stiffness_distribution_params": (0.9, 1.1),
@@ -445,7 +447,7 @@ class EventCfg: #
     randomized_robot_force_disturbance = EventTerm(
         func=mdp.apply_external_force_torque,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg(
                 name="robot",
@@ -460,7 +462,7 @@ class EventCfg: #
     randomized_object_force_disturbance = EventTerm(
         func=mdp.apply_external_force_torque,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "force_range": (-1.0, 1.0),
@@ -471,7 +473,7 @@ class EventCfg: #
     randomized_object_reset_pose = EventTerm(
         func=mdp.reset_root_state_with_random_orientation,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (0, 0.01)},
@@ -493,7 +495,7 @@ class CurriculumCfg:
 
 
 @configclass
-class InHandEnvV1Cfg(ManagerBasedRLEnvCfg):
+class InHandEnvV2Cfg(ManagerBasedRLEnvCfg):
     """LeapHand连续旋转任务环境配置类 - ManagerBasedRLEnv架构"""
     ui_window_class_type: type | None = ManagerBasedRLEnvWindow
     is_finite_horizon: bool = True
@@ -508,7 +510,7 @@ class InHandEnvV1Cfg(ManagerBasedRLEnvCfg):
         device="cuda:0",
         render_interval=decimation,
         physics_material=RigidBodyMaterialCfg(
-            static_friction=0.5,  # 被randomized_object_friction覆盖
+            static_friction=0.5,  # 被 randomized_object_friction 覆盖
             dynamic_friction=0.5,
         ),
         physx=PhysxCfg(
@@ -534,3 +536,5 @@ class InHandEnvV1Cfg(ManagerBasedRLEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         """后初始化钩子 - 可用于自定义验证或调整配置"""
+        self.observations.policy.rotation_axis.history_length = 0  # 明确禁用历史，始终使用当前值
+        self.observations.critic.rotation_axis.history_length = 0  # 明确禁用历史，始终使用当前值

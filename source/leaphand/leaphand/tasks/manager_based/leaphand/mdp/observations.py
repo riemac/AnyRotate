@@ -124,7 +124,9 @@ def phase(env: ManagerBasedRLEnv, period: float = 2.0) -> torch.Tensor:
     Returns:
         相位编码 (num_envs, 2) - [sin(θ), cos(θ)]，其中θ是当前相位角
         
-    NOTE:
+    Note
+    ----
+    相位的数学模型
         - 使用sin-cos编码可以避免相位角度的不连续性
         - 相位角 = 2π * (当前时间 / 周期)
         - 当前时间 = 步数 * 仿真时间步长 * 抽样倍率
