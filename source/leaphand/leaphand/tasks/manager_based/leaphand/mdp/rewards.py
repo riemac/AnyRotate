@@ -632,8 +632,27 @@ def object_fall_penalty(
 ###
 
 class ContinuousRotationSparseReward(ManagerTermBase):
-    r"""连续旋转目标达成的稀疏奖励，兼容 ManagerBasedRLEnv 的标准重置流程。"""
+    r"""连续旋转目标达成的稀疏奖励，兼容 ManagerBasedRLEnv 的标准重置流程。
 
+    该奖励函数会在物体绕指定轴旋转超过一定角度时给予奖励，并记录旋转次数。
+    奖励值会随着连续成功旋转的次数增加而增加。
+
+    Args:
+        env: ManagerBasedRLEnv 环境实例
+        asset_cfg (SceneEntityCfg, optional): 物体资产配置，默认为 SceneEntityCfg("object")
+        theta_goal (float, optional): 目标旋转角度（弧度），默认为 π/3 (约60度)
+        additive_reward (float, optional): 每次成功旋转后累加的奖励值，默认为 0.0
+        
+    Returns:
+        奖励值 (num_envs,)
+
+    Note
+    ----
+        奖励公式：r = 1.0 + additive_reward * count
+            - count: 连续成功旋转的次数，重置时清零
+            - additive_reward: 奖励的权重
+            - 1.0: 基准奖励值
+    """
     def __init__(self, cfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
 

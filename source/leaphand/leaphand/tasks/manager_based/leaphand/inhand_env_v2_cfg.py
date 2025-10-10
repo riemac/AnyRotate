@@ -40,6 +40,8 @@ from leaphand.tasks.manager_based.leaphand.mdp.rewards import pose_diff_penalty
 from . import mdp as leaphand_mdp
 from .mdp.commands import RotationAxisCommandCfg
 
+from .mdp.actions import LinearDecayAlphaEMAJointPositionToLimitsActionCfg
+
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
 horizon_length = 32
 epochs_num = 4 # 与horizon_length配合以确定数据更新频率
@@ -177,6 +179,17 @@ class ActionsCfg:
         rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
         alpha=1/10,  # 平滑系数
     )
+    # hand_joint_pos_dynamic = LinearDecayAlphaEMAJointPositionToLimitsActionCfg(
+    #     asset_name="robot",
+    #     joint_names=["a_.*"],
+    #     scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
+    #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
+    #     initial_alpha=1/1,  # 初始平滑系数
+    #     final_alpha=1/10,  # 最终平滑系数
+    #     init_epochs=1,  # 开始线性变化的 epoch（含）
+    #     end_epochs=2000,  # 结束线性变化的 epoch（含后保持 final）
+    #     horizon_length=horizon_length,  # episode长度
+    # )
 
 
 @configclass
@@ -297,13 +310,23 @@ class RewardsCfg:
     # )
     rotation_velocity = RewTerm(
         func=leaphand_mdp.rotation_velocity,
-        weight=10.0,
+        weight=5.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "visualize_actual_axis": True,  # 启用实际旋转轴可视化
-            "target_angular_speed": 1,   # 目标角速度 (rad/s)
+            "target_angular_speed": math.pi/6,   # 目标角速度 (rad/s)
             "positive_decay": 3.0,        # 正向奖励的指数衰减因子
             "negative_penalty_weight": 0.5,  # 负向惩罚权重
+        },
+    )
+
+    rotation_target_get_done = RewTerm(
+        func=leaphand_mdp.ContinuousRotationSparseReward,
+        weight=50.0,
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "theta_goal": math.pi/4,  # 90度 (弧度)
+            "additive_reward": 0.2,  # 每次成功旋转后增加的奖励值
         },
     )
 
@@ -337,7 +360,7 @@ class RewardsCfg:
 
     object_fall_penalty = RewTerm(
         func=leaphand_mdp.object_fall_penalty, 
-        weight=-20,
+        weight=-50,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "z_threshold": 0.10,
@@ -477,6 +500,7 @@ class EventCfg: #
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (0, 0.01)},
+            "velocity_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.0, 0.0)},  # 不添加初始速度
         },
     )
 
