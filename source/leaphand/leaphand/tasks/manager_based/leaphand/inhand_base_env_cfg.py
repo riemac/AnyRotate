@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """LeapHand连续旋转任务环境配置 - ManagerBasedRLEnv架构
-- 该配置类的奖励项将参考LEAP_Hand_Sim中的奖励项，并和先前自设的奖励项相结合（连续旋转速度奖励）
+- 该配置类的奖项参考LEAP_Hand_Isaac_Lab，尽管任务不同
+- 主要增加一个连续旋转目标达成的稀疏奖励项
 """
 
 import math
@@ -39,8 +40,11 @@ from leaphand.tasks.manager_based.leaphand.mdp.rewards import pose_diff_penalty
 from . import mdp as leaphand_mdp
 from .mdp.commands import RotationAxisCommandCfg
 
+from .mdp.actions import LinearDecayAlphaEMAJointPositionToLimitsActionCfg
+
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
 horizon_length = 32
+epochs_num = 4 # 与horizon_length配合以确定数据更新频率
 
 # 使用Isaac Lab内置的cube资产
 object_usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"
@@ -54,7 +58,9 @@ class InHandSceneCfg(InteractiveSceneCfg):
     # 地面
     ground = AssetBaseCfg(
         prim_path="/World/ground",
-        spawn=sim_utils.GroundPlaneCfg(),
+        spawn=sim_utils.GroundPlaneCfg(
+            usd_path="/home/hac/isaac/isaacsim_assets/Assets/Isaac/5.0/Isaac/Environments/Grid/default_environment.usd"
+        ),
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.1)),
     )
 
@@ -175,6 +181,17 @@ class ActionsCfg:
         rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
         alpha=1/10,  # 平滑系数
     )
+    # hand_joint_pos_dynamic = LinearDecayAlphaEMAJointPositionToLimitsActionCfg(
+    #     asset_name="robot",
+    #     joint_names=["a_.*"],
+    #     scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
+    #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
+    #     initial_alpha=1/1,  # 初始平滑系数
+    #     final_alpha=1/10,  # 最终平滑系数
+    #     init_epochs=1,  # 开始线性变化的 epoch（含）
+    #     end_epochs=2000,  # 结束线性变化的 epoch（含后保持 final）
+    #     horizon_length=horizon_length,  # episode长度
+    # )
 
 
 @configclass
@@ -229,6 +246,7 @@ class ObservationsCfg:
             params={"period": 2.0},
         )
 
+        # 物体位置和旋转的特权观测
         object_pos_w = ObsTerm(
             func=mdp.root_pos_w,
             params={"asset_cfg": SceneEntityCfg("object")},
@@ -276,8 +294,8 @@ class ObservationsCfg:
         )
 
     # 观测组配置
-    policy: PolicyCfg = PolicyCfg(history_length=3)
-    critic: CriticCfg = CriticCfg(history_length=3)
+    policy: PolicyCfg = PolicyCfg(history_length=2)
+    critic: CriticCfg = CriticCfg(history_length=2)
 
 
 @configclass
@@ -294,13 +312,23 @@ class RewardsCfg:
     # )
     rotation_velocity = RewTerm(
         func=leaphand_mdp.rotation_velocity,
-        weight=10.0,
+        weight=5.0,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "visualize_actual_axis": True,  # 启用实际旋转轴可视化
-            "target_angular_speed": 1,   # 目标角速度 (rad/s)
+            "target_angular_speed": math.pi/6,   # 目标角速度 (rad/s)
             "positive_decay": 3.0,        # 正向奖励的指数衰减因子
             "negative_penalty_weight": 0.5,  # 负向惩罚权重
+        },
+    )
+
+    rotation_target_get_done = RewTerm(
+        func=leaphand_mdp.ContinuousRotationSparseReward,
+        weight=50.0,
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "theta_goal": math.pi/4,  # 90度 (弧度)
+            "additive_reward": 0.2,  # 每次成功旋转后增加的奖励值
         },
     )
 
@@ -334,7 +362,7 @@ class RewardsCfg:
 
     object_fall_penalty = RewTerm(
         func=leaphand_mdp.object_fall_penalty, 
-        weight=-20,
+        weight=-50,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "z_threshold": 0.10,
@@ -371,7 +399,7 @@ class EventCfg: #
     randomized_object_mass = EventTerm(
         func=mdp.randomize_rigid_body_mass,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "mass_distribution_params": (0.25, 1.2),
@@ -383,7 +411,7 @@ class EventCfg: #
     randomized_object_com = EventTerm(
         func=leaphand_mdp.randomize_rigid_object_com,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "com_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (-0.01, 0.01)},
@@ -401,12 +429,12 @@ class EventCfg: #
 
     randomized_object_friction = EventTerm(
         func=mdp.randomize_rigid_body_material,
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "static_friction_range": (0.2, 0.8),  # 塑料、橡胶一般这么多
-            "dynamic_friction_range": (0.15, 0.5),
+            "dynamic_friction_range": (0.15, 0.6),
             "restitution_range": (0.0, 0.1),
             "num_buckets": 250,
             "make_consistent": True,  # 确保 dynamic_friction <= static_friction
@@ -415,7 +443,7 @@ class EventCfg: #
 
     randomized_hand_friction = EventTerm(
         func=mdp.randomize_joint_parameters,
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names="a_.*"),
@@ -431,7 +459,7 @@ class EventCfg: #
     randomized_actuator_gains = EventTerm(
         func=mdp.randomize_actuator_gains,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "stiffness_distribution_params": (0.9, 1.1),
@@ -444,7 +472,7 @@ class EventCfg: #
     randomized_robot_force_disturbance = EventTerm(
         func=mdp.apply_external_force_torque,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg(
                 name="robot",
@@ -459,11 +487,22 @@ class EventCfg: #
     randomized_object_force_disturbance = EventTerm(
         func=mdp.apply_external_force_torque,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "force_range": (-1.0, 1.0),
             "torque_range": (-0.1, 0.1),
+        },
+    )
+
+    randomized_object_reset_pose = EventTerm(
+        func=mdp.reset_root_state_with_random_orientation,
+        mode="reset",
+        min_step_count_between_reset=epochs_num*horizon_length,
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (0, 0.01)},
+            "velocity_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.0, 0.0)},  # 不添加初始速度
         },
     )
 
@@ -476,13 +515,13 @@ class CurriculumCfg:
         params={
             "term_name": "pose_diff_penalty",
             "weight": -0.02,
-            "num_steps": 300*horizon_length # 300个epochs后
-        }
+            "num_steps": 300 * horizon_length,  # 300个epochs后
+        },
     )
 
 
 @configclass
-class InHandEnvV1Cfg(ManagerBasedRLEnvCfg):
+class InHandEnvV2Cfg(ManagerBasedRLEnvCfg):
     """LeapHand连续旋转任务环境配置类 - ManagerBasedRLEnv架构"""
     ui_window_class_type: type | None = ManagerBasedRLEnvWindow
     is_finite_horizon: bool = True
@@ -497,7 +536,7 @@ class InHandEnvV1Cfg(ManagerBasedRLEnvCfg):
         device="cuda:0",
         render_interval=decimation,
         physics_material=RigidBodyMaterialCfg(
-            static_friction=0.5,  # 被randomized_object_friction覆盖
+            static_friction=0.5,  # 被 randomized_object_friction 覆盖
             dynamic_friction=0.5,
         ),
         physx=PhysxCfg(
@@ -523,3 +562,5 @@ class InHandEnvV1Cfg(ManagerBasedRLEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         """后初始化钩子 - 可用于自定义验证或调整配置"""
+        self.observations.policy.rotation_axis.history_length = 0  # 明确禁用历史，始终使用当前值
+        self.observations.critic.rotation_axis.history_length = 0  # 明确禁用历史，始终使用当前值
