@@ -9,6 +9,7 @@
 """
 
 import math
+from shlex import join
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
@@ -38,9 +39,8 @@ from leaphand.robots.leap import LEAP_HAND_CFG
 from leaphand.tasks.manager_based.leaphand.mdp import observations_privileged as priv_obs
 from leaphand.tasks.manager_based.leaphand.mdp.rewards import pose_diff_penalty
 from . import mdp as leaphand_mdp
-from .mdp.commands import RotationAxisCommandCfg
 
-from .mdp.actions import LinearDecayAlphaEMAJointPositionToLimitsActionCfg
+# from .mdp.actions import LinearDecayAlphaEMAJointPositionToLimitsActionCfg
 
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
 horizon_length = 32
@@ -157,46 +157,58 @@ class InHandSceneCfg(InteractiveSceneCfg):
 @configclass
 class CommandsCfg:
     """Commands specifications for the MDP."""
-    rotation_axis = RotationAxisCommandCfg(
-        rotation_axis_mode="z_axis",  # 默认Z轴旋转
+    object_pose = leaphand_mdp.ContinuousRotationCommandCfg(
+        asset_name="object",
         resampling_time_range=(1e6, 1e6),  # 不基于时间重采样
-        change_rotation_axis_interval=0,  # 不自动更换旋转轴
-        rotation_axis_noise=0.05,  # 轻微噪声
-        debug_vis=True,  # 启用旋转轴可视化
+        init_pos_offset=(0.0, 0.0, 0.0),
+        rotation_axis="z",  # 固定Z轴旋转
+        delta_angle=math.pi / 8.0,  # 每次旋转22.5度
+        make_quat_unique=True,
+        update_goal_on_success=True,
     )
  
  
 @configclass
 class ActionsCfg:
-    # hand_joint_pos = mdp.RelativeJointPositionActionCfg(
-    #     asset_name="robot",
-    #     joint_names=["a_.*"],  # 所有手部关节
-    #     scale=1 / 1,  # 增量缩放因子：控制每步的最大位置变化量
-    #     use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
-    # )
-    hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
+    """动作配置 - 动作平滑"""
+    hand_joint_pos = mdp.RelativeJointPositionActionCfg(
         asset_name="robot",
         joint_names=["a_.*"],  # 所有手部关节
-        scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
-        rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
-        alpha=1/10,  # 平滑系数
+        scale=1 / 10,  # 增量缩放因子：控制每步的最大位置变化量
+        use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
     )
-    # hand_joint_pos_dynamic = LinearDecayAlphaEMAJointPositionToLimitsActionCfg(
+    # hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
     #     asset_name="robot",
-    #     joint_names=["a_.*"],
+    #     joint_names=["a_.*"],  # 所有手部关节
     #     scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
     #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
-    #     initial_alpha=1/1,  # 初始平滑系数
-    #     final_alpha=1/10,  # 最终平滑系数
-    #     init_epochs=1,  # 开始线性变化的 epoch（含）
-    #     end_epochs=2000,  # 结束线性变化的 epoch（含后保持 final）
-    #     horizon_length=horizon_length,  # episode长度
+    #     alpha=1/10,  # 平滑系数
     # )
-
 
 @configclass
 class ObservationsCfg:
     """观测配置 - 支持非对称Actor-Critic"""
+
+    @configclass
+    class PrivilegedObsCfg(ObsGroup):
+        """Actor策略观测 - 包含大量仅仿真可用的特权信息"""
+        # -- robot terms
+        joint_pos = ObsTerm(
+            func=mdp.joint_pos_limit_normalized,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+        )
+
+        # -- object terms
+        object_pos = ObsTerm(
+            func=mdp.root_pos_w, noise=Gnoise(std=0.002), params={"asset_cfg": SceneEntityCfg("object")}
+        )
+        object_quat = ObsTerm(
+            func=mdp.root_quat_w, params={"asset_cfg": SceneEntityCfg("object"), "make_quat_unique": False}
+        )
+
+        # -- command terms
+        goal_pose = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
+
 
     @configclass
     class PolicyCfg(ObsGroup):
@@ -211,16 +223,6 @@ class ObservationsCfg:
             params={"asset_cfg": SceneEntityCfg("robot")},
         )
 
-        rotation_axis = ObsTerm(
-            func=mdp.generated_commands,
-            params={"command_name": "rotation_axis"},
-            history_length=0,  # 明确禁用历史，始终使用当前值
-        )
-
-        phase = ObsTerm(
-            func=leaphand_mdp.phase,
-            params={"period": 2.0},
-        )
 
     @configclass
     class CriticCfg(ObsGroup):

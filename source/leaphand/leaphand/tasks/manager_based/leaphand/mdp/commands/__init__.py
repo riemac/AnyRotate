@@ -5,5 +5,6 @@
 
 """Sub-module containing command terms for rotation axis goals."""
 
-from .commands_cfg import RotationAxisCommandCfg  # noqa: F401
+from .commands_cfg import *  # noqa: F401
 from .rotation_axis_command import RotationAxisCommand  # noqa: F401
+from .rotation_command import ContinuousRotationCommand
