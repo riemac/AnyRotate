@@ -267,10 +267,6 @@ class ObservationsCfg:
 @configclass
 class EventCfg: #
     """域随机化配置 - 集成官方LeapHand的RL技巧"""
-    reset_scene_to_default = EventTerm(
-        func=mdp.reset_scene_to_default,
-        mode="reset"
-    )
     
     # -- object
     randomized_object_mass = EventTerm(
@@ -307,10 +303,10 @@ class EventCfg: #
     randomized_object_friction = EventTerm(
         func=mdp.randomize_rigid_body_material,
         min_step_count_between_reset=epochs_num*horizon_length,
-        mode="reset",
-        params={
+        mode="startup",
+        params={ # 从 range 里均匀采样
             "asset_cfg": SceneEntityCfg("object"),
-            "static_friction_range": (0.2, 0.8), # 塑料、橡胶一般这么多
+            "static_friction_range": (0.2, 1.0), # 塑料、橡胶一般这么多
             "dynamic_friction_range": (0.15, 0.6),
             "restitution_range": (0.0, 0.1), # 不提供的话默认(0,0)
             "num_buckets": 250,
@@ -350,7 +346,7 @@ class EventCfg: #
             "friction_distribution_params": (0.8, 1.2),
             "armature_distribution_params": (0.6, 1.5),
             "lower_limit_distribution_params": (0.975, 1.025),  # NOTE: 这里是关节限位范围，不是关节阻尼范围
-            "upper_limit_distribution_params": (0.975, 1.025),  # NOTE: 这里是关节限位范围，不是关节阻尼范围
+            "upper_limit_distribution_params": (0.975, 1.025),  # 这里是关节限位范围，不是关节阻尼范围
             "operation": "scale",
             "distribution": "uniform",
         },
@@ -362,10 +358,10 @@ class EventCfg: #
         min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "stiffness_distribution_params": (0.9, 1.1),
-            "damping_distribution_params": (0.8, 1.2),
+            "stiffness_distribution_params": (0.9, 1.1), # 官方默认是3.0
+            "damping_distribution_params": (0.8, 1.2), # 官方默认是0.1
             "distribution": "uniform",
-            "operation": "scale",
+            "operation": "scale", # 缩放
         },
     )
 
@@ -389,11 +385,17 @@ class EventCfg: #
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "mass_distribution_params": (0.95, 1.05),
+            "mass_distribution_params": (0.95, 1.05), # 每个机器人连杆的质量都乘以不同随机的缩放系数
             "operation": "scale",
+            "distribution": "uniform",
         },
     )
-
+    
+    # -- reset
+    reset_scene_to_default = EventTerm( #TODO:如果采用reset_root_state_uniform，可能与此冲突
+        func=mdp.reset_scene_to_default,
+        mode="reset"
+    )
 
 @configclass
 class RewardsCfg:
