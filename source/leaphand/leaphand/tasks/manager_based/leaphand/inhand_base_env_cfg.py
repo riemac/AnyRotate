@@ -400,63 +400,11 @@ class EventCfg: #
 @configclass
 class RewardsCfg:
     """奖励配置 - 连续旋转任务奖励机制"""
-    # rotate_reward = RewTerm(
-    #     func=leaphand_mdp.rotate_angvel_clipped,
-    #     weight=1.25,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("object"),
-    #         "clip_min": -0.25,
-    #         "clip_max": 0.25,
-    #     },
-    # )
-    rotation_velocity = RewTerm(
-        func=leaphand_mdp.rotation_velocity,
-        weight=5.0,
-        params={
-            "asset_cfg": SceneEntityCfg("object"),
-            "visualize_actual_axis": True,  # 启用实际旋转轴可视化
-            "target_angular_speed": math.pi/6,   # 目标角速度 (rad/s)
-            "positive_decay": 3.0,        # 正向奖励的指数衰减因子
-            "negative_penalty_weight": 0.5,  # 负向惩罚权重
-        },
-    )
-
-    rotation_target_get_done = RewTerm(
-        func=leaphand_mdp.ContinuousRotationSparseReward,
-        weight=50.0,
-        params={
-            "asset_cfg": SceneEntityCfg("object"),
-            "theta_goal": math.pi/4,  # 90度 (弧度)
-            "additive_reward": 0.2,  # 每次成功旋转后增加的奖励值
-        },
-    )
-
-    object_linvel_penalty = RewTerm(
-        func=leaphand_mdp.object_linvel_l1_penalty,
-        weight=-0.3,
-        params={"object_cfg": SceneEntityCfg("object")},
-    )
 
     pose_diff_penalty = RewTerm( # TODO：该项惩罚有些过高，后期应调整
         func=leaphand_mdp.pose_diff_penalty,
         weight=-0.1,  
         params={"asset_cfg": SceneEntityCfg("robot")},
-    )
-
-    hand_torque_penalty = RewTerm(
-        func=mdp.joint_torques_l2,
-        weight=-0.1,
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-        },
-    )
-
-    hand_work_penalty = RewTerm(
-        func=leaphand_mdp.work_penalty,
-        weight=-0.01,
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-        },
     )
 
     object_fall_penalty = RewTerm(
