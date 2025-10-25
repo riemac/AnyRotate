@@ -386,7 +386,7 @@ class EventCfg: #
         mode="reset",
         params={ # rpy角是按照Isaaclab中的坐标系惯例的正方向来的
             "pose_range": {"x": [-0.01, 0.01], "y": [-0.01, 0.01], "z": [-0.01, 0.01],
-                           "roll": [-0.0, 0.0], "pitch": [-0.0, 0.0], "yaw": [-0.0, 0.0]},
+                           "roll": [-0.0, 0.0], "pitch": [-0.0, 0.0], "yaw": [-math.pi, math.pi]},
             "velocity_range": {},
             "asset_cfg": SceneEntityCfg("object", body_names=".*"),
         },
