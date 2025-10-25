@@ -325,17 +325,6 @@ class EventCfg: #
         },
     )
 
-    randomized_object_reset_pose = EventTerm(
-        func=mdp.reset_root_state_with_random_orientation,
-        mode="reset",
-        min_step_count_between_reset=epochs_num*horizon_length,
-        params={
-            "asset_cfg": SceneEntityCfg("object"),
-            "pose_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (0, 0.01)},
-            "velocity_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.0, 0.0)},  # 不添加初始速度
-        },
-    )
-
     # -- robot
     randomized_hand_friction = EventTerm(
         func=mdp.randomize_joint_parameters,
@@ -392,10 +381,27 @@ class EventCfg: #
     )
     
     # -- reset
-    reset_scene_to_default = EventTerm( #TODO:如果采用reset_root_state_uniform，可能与此冲突
-        func=mdp.reset_scene_to_default,
-        mode="reset"
+    reset_object = EventTerm(
+        func=mdp.reset_root_state_uniform,
+        mode="reset",
+        params={ # rpy角是按照Isaaclab中的坐标系惯例的正方向来的
+            "pose_range": {"x": [-0.01, 0.01], "y": [-0.01, 0.01], "z": [-0.01, 0.01],
+                           "roll": [-0.0, 0.0], "pitch": [-0.0, 0.0], "yaw": [-0.0, 0.0]},
+            "velocity_range": {},
+            "asset_cfg": SceneEntityCfg("object", body_names=".*"),
+        },
     )
+    
+    reset_robot_joints = EventTerm(
+        func=mdp.reset_joints_by_offset,
+        mode="reset",
+        params={
+            "position_range": {".*": [-0.2, 0.2]},
+            "velocity_range": {".*": [0.0, 0.0]},
+        },
+    )
+
+
 
 @configclass
 class RewardsCfg:
