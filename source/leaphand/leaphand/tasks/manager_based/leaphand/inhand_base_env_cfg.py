@@ -29,6 +29,7 @@ from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.noise import AdditiveGaussianNoiseCfg as Gnoise
 
 from isaaclab.envs.ui import ManagerBasedRLEnvWindow
 from isaaclab.envs.common import ViewerCfg
@@ -43,13 +44,11 @@ from . import mdp as leaphand_mdp
 # from .mdp.actions import LinearDecayAlphaEMAJointPositionToLimitsActionCfg
 
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
-horizon_length = 32
-epochs_num = 4 # 与horizon_length配合以确定数据更新频率
+# horizon_length = 32
+# epochs_num = 4 # 与horizon_length配合以确定数据更新频率
 
 # 使用Isaac Lab内置的cube资产
 object_usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"
-
-# Scene definition
 
 @configclass
 class InHandSceneCfg(InteractiveSceneCfg):
@@ -199,10 +198,8 @@ class ObservationsCfg:
         )
 
         # -- object terms
-        object_pos = ObsTerm(
-            func=mdp.root_pos_w, noise=Gnoise(std=0.002), params={"asset_cfg": SceneEntityCfg("object")}
-        )
-        object_quat = ObsTerm(
+        object_pos = ObsTerm(func=mdp.root_pos_w, noise=Gnoise(std=0.002), params={"asset_cfg": SceneEntityCfg("object")})
+        object_quat = ObsTerm( # IDEA:该项添加噪音可能会破坏归一化约束？
             func=mdp.root_quat_w, params={"asset_cfg": SceneEntityCfg("object"), "make_quat_unique": False}
         )
 
@@ -299,8 +296,8 @@ class EventCfg: #
             "asset_cfg": SceneEntityCfg("robot", joint_names="a_.*"),
             "friction_distribution_params": (0.8, 1.2),
             "armature_distribution_params": (0.6, 1.5),
-            "lower_limit_distribution_params": (0.975, 1.025),  # NOTE: 这里是关节限位范围，不是关节阻尼范围
-            "upper_limit_distribution_params": (0.975, 1.025),  # 这里是关节限位范围，不是关节阻尼范围
+            "lower_limit_distribution_params": (0.975, 1.025),  # 这里是关节限位范围，不是关节阻尼范围
+            "upper_limit_distribution_params": (0.975, 1.025),
             "operation": "scale",
             "distribution": "uniform",
         },
