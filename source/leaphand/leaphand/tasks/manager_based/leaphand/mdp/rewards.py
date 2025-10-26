@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import torch
+import isaaclab.utils.math as math_utils
 
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
@@ -21,6 +22,77 @@ from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
+
+def track_orientation_inv_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str = "goal_pose",
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    rot_eps: float = 1e-3,
+) -> torch.Tensor:
+    """方向跟踪奖励 - 使用方向误差的倒数。
+
+    奖励为物体当前姿态与目标姿态之间的方向误差倒数，误差越小奖励越大。
+
+    Args:
+        env: ManagerBasedRLEnv - 环境实例
+        command_name: str - 命令项名称（用于获取目标姿态）
+        object_cfg: SceneEntityCfg - 物体资产配置
+        rot_eps: float - 防止除零的小常数（默认 1e-3）
+
+    Returns:
+        (num_envs,) 张量，方向跟踪奖励
+
+    NOTE:
+        - 奖励公式：R = 1 / (eps + |dtheta|)
+    """
+    # 获取物体资产
+    asset: RigidObject = env.scene[object_cfg.name]
+
+    # 获取目标姿态（从命令管理器）
+    # goal_pose 通常是 (pos, quat)，我们取后4维作为目标四元数
+    goal_pose = env.command_manager.get_command(command_name)
+    goal_quat_w = goal_pose[:, -4:]  # (num_envs, 4) in (w, x, y, z)
+
+    # 计算方向误差（轴角表示的 L2 范数）
+    # q_goal ⊖ q_current^(-1) -> 轴角对 -> 角误差（L2范数，单位轴化1，剩下角度）
+    dtheta = math_utils.quat_error_magnitude(goal_quat_w, asset.data.root_quat_w)
+
+    # 计算奖励：误差越小，奖励越大
+    reward = 1.0 / (dtheta + rot_eps)
+
+    return reward
+
+def success_bonus(
+    env: ManagerBasedRLEnv,
+    command_name: str = "goal_pose",
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    threshold: float = 0.05,
+) -> torch.Tensor:
+    """成功奖励 - 达到目标旋转时的稀疏奖励
+
+    Args:
+        env: ManagerBasedRLEnv - 环境实例
+        command_name: str - 命令项名称（用于获取目标姿态）
+        object_cfg: SceneEntityCfg - 物体资产配置
+        threshold: float - 成功容忍度（弧度）
+
+    Returns:
+        (num_envs,) 张量，成功奖励
+    """
+    # 获取物体资产
+    asset: RigidObject = env.scene[object_cfg.name]
+
+    # 获取目标姿态（从命令管理器）
+    goal_pose = env.command_manager.get_command(command_name)
+    goal_quat_w = goal_pose[:, -4:]  # (num_envs, 4) in (w, x, y, z)
+
+    # 计算方向误差（轴角表示的 L2 范数）
+    dtheta = math_utils.quat_error_magnitude(goal_quat_w, asset.data.root_quat_w)
+
+    # 计算成功奖励
+    success_reward = torch.where(dtheta <= threshold, torch.ones_like(dtheta), torch.zeros_like(dtheta))
+
+    return success_reward
 
 def fall_penalty(
     env: ManagerBasedRLEnv,
@@ -56,6 +128,9 @@ def fall_penalty(
     return torch.where(distance > fall_distance, torch.ones_like(distance), torch.zeros_like(distance))
 
 
+###
+#  参考LEAP_Hand_Isaac_Lab奖励项
+###
 def pose_diff_penalty(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
@@ -112,8 +187,3 @@ def pose_diff_penalty(
     pose_diff_penalty = torch.sum(pose_diff ** 2, dim=-1)
 
     return pose_diff_penalty
-
-###
-#  参考LEAP_Hand_Isaac_Lab奖励项
-###
-
