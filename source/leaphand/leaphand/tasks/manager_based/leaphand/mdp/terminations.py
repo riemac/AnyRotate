@@ -69,53 +69,29 @@ def object_falling_termination(
     object_dist = torch.norm(object_pos - target_pos, p=2, dim=-1)
     return object_dist >= fall_dist
 
-
-###
-# 仿照LEAP_Hand_Sim的实现
-###
-
-def object_falling_z_termination(
+def object_away_from_robot(
     env: ManagerBasedRLEnv,
+    threshold: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-    z_threshold: float = 0.10,
 ) -> torch.Tensor:
-    """基于 z 轴高度差异判断物体是否掉落（相对于初始高度）
+    """Check if object has gone far from the robot.
 
-    与 object_fall_penalty 保持相同逻辑：比较当前物体在环境局部坐标系下的 z 与初始 z，
-    若高度差超过阈值则判定为掉落（返回 True）。
+    The object is considered to be out-of-reach if the distance between the robot and the object is greater
+    than the threshold.
 
     Args:
-        env: ManagerBasedRLEnv - 环境实例
-        object_cfg: SceneEntityCfg - 物体资产配置（默认名为 "object"）
-        z_threshold: float - z 轴高度差异阈值，超过此值判定为掉落
-
-    Returns:
-        torch.Tensor(bool) - 每个环境是否满足掉落/终止条件 (shape: [num_envs])
-
-    Note:
-        - object_pos_w: 物体在世界坐标系下的位置，shape 为 (num_envs, 3)
-        - env.scene.env_origins: 每个 env 的世界原点偏置，shape 为 (num_envs, 3)
-        - object_pos = object_pos_w - env_origins 得到物体在环境局部坐标系下的位置
-        - initial_pos 来自资产 cfg 中的 init_state.pos，表示该物体的初始位置（通常为长度 3 的数组/元组）
-        - 比较的是 z 分量：dz = |object_pos[:,2] - initial_pos_z|
+        env: The environment object.
+        threshold: The threshold for the distance between the robot and the object.
+        asset_cfg: The configuration for the robot entity. Default is "robot".
+        object_cfg: The configuration for the object entity. Default is "object".
     """
-    # 获取物体资产对象及其世界坐标位置 (shape: [num_envs, 3])
-    asset: RigidObject = env.scene[object_cfg.name]
-    object_pos_w = asset.data.root_pos_w  # world positions for each env
+    # extract useful elements
+    robot = env.scene[asset_cfg.name]
+    object = env.scene[object_cfg.name]
 
-    # 将物体位置转换到环境局部坐标系（减去每个 env 的原点偏置）
-    # object_pos 的 shape 为 [num_envs, 3]
-    env_origins = env.scene.env_origins
-    object_pos = object_pos_w - env_origins
+    # compute distance
+    dist = torch.norm(robot.data.root_pos_w - object.data.root_pos_w, dim=1)
 
-    # 从资产配置中读取初始位置（init_state.pos），并转换为与 object_pos 相同的 device/dtype
-    # 然后扩展到每个 env（shape: [num_envs, 3]）
-    initial_pos = asset.cfg.init_state.pos
-    target_pos = torch.tensor(initial_pos, device=env.device, dtype=object_pos.dtype).expand(env.num_envs, -1)
-
-    # 只比较 z 轴高度差（第 2 索引），计算绝对差值并判断是否超过阈值
-    dz = torch.abs(object_pos[:, 2] - target_pos[:, 2])
-
-    # 返回布尔张量：对于每个 env，若高度差 >= z_threshold 则视为掉落/终止
-    return dz >= z_threshold
+    return dist > threshold
     

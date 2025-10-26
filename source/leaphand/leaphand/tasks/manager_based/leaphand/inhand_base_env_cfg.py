@@ -37,7 +37,7 @@ from isaaclab.devices.openxr import XrCfg
 import isaaclab.envs.mdp as mdp
 from leaphand.robots.leap import LEAP_HAND_CFG
 from leaphand.tasks.manager_based.leaphand.mdp import observations_privileged as priv_obs
-from leaphand.tasks.manager_based.leaphand.mdp.rewards import pose_diff_penalty
+from leaphand.tasks.manager_based.leaphand.mdp.rewards import pose_diff_penalty, track_orientation_inv_l2
 from . import mdp as leaphand_mdp
 
 # from .mdp.actions import LinearDecayAlphaEMAJointPositionToLimitsActionCfg
@@ -406,35 +406,29 @@ class EventCfg: #
 class RewardsCfg:
     """奖励配置 - 连续旋转任务奖励机制"""
 
-    pose_diff_penalty = RewTerm( # TODO：该项惩罚有些过高，后期应调整
-        func=leaphand_mdp.pose_diff_penalty,
-        weight=-0.1,  
-        params={"asset_cfg": SceneEntityCfg("robot")},
+    # -- task
+    track_orientation_inv_l2 = RewTerm(
+        func=leaphand_mdp.track_orientation_inv_l2,
+        weight=1.0,
+        params={"object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1, "command_name": "goal_pose"},
+    )
+    success_bonus = RewTerm(
+        func=leaphand_mdp.success_bonus,
+        weight=250.0,
+        params={"object_cfg": SceneEntityCfg("object"), "command_name": "goal_pose"},
     )
 
-    object_fall_penalty = RewTerm(
-        func=leaphand_mdp.object_fall_penalty, 
-        weight=-50,
-        params={
-            "asset_cfg": SceneEntityCfg("object"),
-            "z_threshold": 0.10,
-        },
-    )
-
+    # -- penalties
+    joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-2.5e-5)
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.0001)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
 
 @configclass
 class TerminationsCfg:
     """终止条件配置"""
 
     # 物体掉落终止
-    object_falling = DoneTerm(
-        # 使用 z 轴高度差判定的终止函数，和 object_fall_penalty 的 z_threshold 逻辑保持一致
-        func=leaphand_mdp.object_falling_z_termination,
-        params={
-            "object_cfg": SceneEntityCfg("object"),
-            "z_threshold": 0.10,
-        },
-    )
+    object_falling = DoneTerm(func=leaphand_mdp.object_away_from_robot, params={"threshold": 0.3})
 
     # 超时终止
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
