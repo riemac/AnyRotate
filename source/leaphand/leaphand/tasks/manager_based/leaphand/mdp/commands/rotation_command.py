@@ -36,7 +36,7 @@ _AXIS_MAP = {
 }
 
 
-class ContinuousRotatioCommand(CommandTerm):
+class ContinuousRotationCommand(CommandTerm):
     """连续旋转命令项。
 
     Note
@@ -113,10 +113,10 @@ class ContinuousRotatioCommand(CommandTerm):
         axis_vec = _AXIS_MAP[axis_key].to(self.device)
         self.rotation_axis_w[env_ids] = axis_vec
 
-        # 在绕指定轴的随机角度上初始化目标姿态，保证 episode 起点多样性
-        random_angle = 2.0 * math.pi * torch.rand(len(env_ids), device=self.device) - math.pi
+        # 在物体当前姿态基础上叠加 delta_angle，作为重置后的初始目标姿态
+        # 这样重置后的第一个目标与后续目标保持一致的角度增量
         axis_batch = axis_vec.repeat(len(env_ids), 1)
-        delta_quat = math_utils.quat_from_angle_axis(random_angle, axis_batch)
+        delta_quat = math_utils.quat_from_angle_axis(self.delta_angle[env_ids], axis_batch)
         base_quat = self.object.data.root_quat_w[env_ids]
         self.quat_command_w[env_ids] = math_utils.quat_mul(delta_quat, base_quat)
         if self.cfg.make_quat_unique:

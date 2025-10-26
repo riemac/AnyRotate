@@ -209,12 +209,12 @@ class ObservationsCfg:
         # -- command terms
         goal_pose = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_pose"})
         goal_quat_diff = ObsTerm(
-            func=mdp.goal_quat_diff, # TODO: 待实现
+            func=leaphand_mdp.goal_quat_diff,
             params={"asset_cfg": SceneEntityCfg("object"), "command_name": "goal_pose", "make_quat_unique": True},
         )
 
         # -- action terms
-        last_action = ObsTerm(func=mdp.last_action)
+        last_action = ObsTerm(func=mdp.last_action) # 返回的是 策略输出的规范化后值（通常是 -1 到 1）
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -400,7 +400,6 @@ class EventCfg: #
             "velocity_range": {".*": [0.0, 0.0]},
         },
     )
-
 
 
 @configclass
