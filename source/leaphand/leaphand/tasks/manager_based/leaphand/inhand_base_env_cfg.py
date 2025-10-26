@@ -223,41 +223,6 @@ class ObservationsCfg:
     @configclass
     class CriticCfg(PrivilegedObsCfg):
         """Critic价值函数观测 - 仅包含真实世界可获取的信息"""
-        # 域随机化的特权观测 -- randomized term（仅critic可见）：
-        # 以“当前/默认”的缩放比为核心特征，并对每组关节做均值/标准差统计，保证输入维度稳定。
-        robot_stiffness_stats = ObsTerm(
-            func=priv_obs.robot_joint_stiffness_stats,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-        robot_damping_stats = ObsTerm(
-            func=priv_obs.robot_joint_damping_stats,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-        robot_armature_stats = ObsTerm(
-            func=priv_obs.robot_joint_armature_stats,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-        robot_joint_friction_stats = ObsTerm(
-            func=priv_obs.robot_joint_friction_stats,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-        object_mass_scale = ObsTerm(
-            func=priv_obs.object_total_mass_scale,
-            params={"object_cfg": SceneEntityCfg("object")},
-        )
-        object_material = ObsTerm(
-            func=priv_obs.object_material_friction_restitution,
-            params={"object_cfg": SceneEntityCfg("object")},
-        )
-
-        object_scale_ratio = ObsTerm(
-            func=priv_obs.object_scale_ratio,
-            params={"object_cfg": SceneEntityCfg("object")},
-        )
-        object_com_offset = ObsTerm(
-            func=priv_obs.object_com_offset,
-            params={"object_cfg": SceneEntityCfg("object")},
-        )
 
     # 观测组配置
     policy: ObsGroup = PrivilegedObsCfg(history_length=2)
@@ -448,20 +413,15 @@ class CurriculumCfg:
 
 
 @configclass
-class InHandEnvV2Cfg(ManagerBasedRLEnvCfg):
+class InHandObjectEnvCfg(ManagerBasedRLEnvCfg):
     """LeapHand连续旋转任务环境配置类 - ManagerBasedRLEnv架构"""
     ui_window_class_type: type | None = ManagerBasedRLEnvWindow
     is_finite_horizon: bool = True
     # 如果replicate_physics=True，场景会对资产进行复制复用，多个环境实例共享底层资产/物理定义。这会导致 USD 层面的变更无法“按 env 维度独立应用”
     # 注意：字段名需为小写的 'scene' 以符合 ManagerBasedRLEnvCfg 的校验
     scene: InteractiveSceneCfg = InHandSceneCfg(num_envs=100, env_spacing=0.75, replicate_physics=False)
-    decimation: int = 4
-    episode_length_s: float = 60.0
     viewer: ViewerCfg = ViewerCfg()
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 120,
-        device="cuda:0",
-        render_interval=decimation,
         physics_material=RigidBodyMaterialCfg(
             static_friction=0.5,  # 被 randomized_object_friction 覆盖
             dynamic_friction=0.5,
@@ -478,16 +438,27 @@ class InHandEnvV2Cfg(ManagerBasedRLEnvCfg):
     wait_for_textures: bool = True
     xr: XrCfg | None = None
 
+    # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
+
+    # MDP settings
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
+
+    # Curriculum settings
     curriculum: CurriculumCfg = CurriculumCfg()
 
     def __post_init__(self):
         super().__post_init__()
         """后初始化钩子 - 可用于自定义验证或调整配置"""
-        self.observations.policy.rotation_axis.history_length = 0  # 明确禁用历史，始终使用当前值
-        self.observations.critic.rotation_axis.history_length = 0  # 明确禁用历史，始终使用当前值
+        # general settings
+        self.decimation = 4
+        self.episode_length_s = 30.0
+        # simulation settings
+        self.sim.dt = 1.0 / 120.0
+        self.sim.render_interval = self.decimation
+        # change viewer settings
+        self.viewer.eye = (2.0, 2.0, 2.0)
