@@ -48,3 +48,4 @@ class ContinuousRotationCommandCfg(CommandTermCfg):
         # 如果未提供成功阈值，则根据 delta_angle 自动计算
         if self.orientation_success_threshold == NONE:
             self.orientation_success_threshold = self.delta_angle / 20.0
+        print(f"成功阈值: {self.orientation_success_threshold}")
