@@ -44,8 +44,8 @@ from . import mdp as leaphand_mdp
 # from .mdp.actions import LinearDecayAlphaEMAJointPositionToLimitsActionCfg
 
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
-# horizon_length = 32
-# epochs_num = 4 # 与horizon_length配合以确定数据更新频率
+horizon_length = 32
+epochs_num = 5 # 与horizon_length配合以确定数据更新频率
 
 # 使用Isaac Lab内置的cube资产
 object_usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"
@@ -164,6 +164,7 @@ class CommandsCfg:
         delta_angle=math.pi / 8.0,  # 每次旋转22.5度
         make_quat_unique=True,
         update_goal_on_success=True,
+        # orientation_success_threshold 将由 __post_init__ 自动计算为 delta_angle/20
     )
  
  
@@ -233,8 +234,7 @@ class EventCfg: #
     # -- object
     randomized_object_mass = EventTerm(
         func=mdp.randomize_rigid_body_mass,
-        mode="reset",
-        min_step_count_between_reset=epochs_num*horizon_length,
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "mass_distribution_params": (0.25, 1.2),
@@ -245,8 +245,7 @@ class EventCfg: #
 
     randomized_object_com = EventTerm(
         func=leaphand_mdp.randomize_rigid_object_com,
-        mode="reset",
-        min_step_count_between_reset=epochs_num*horizon_length,
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "com_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (-0.01, 0.01)},
@@ -262,9 +261,9 @@ class EventCfg: #
         },
     )
 
+
     randomized_object_friction = EventTerm(
         func=mdp.randomize_rigid_body_material,
-        min_step_count_between_reset=epochs_num*horizon_length,
         mode="startup",
         params={ # 从 range 里均匀采样
             "asset_cfg": SceneEntityCfg("object"),
@@ -290,8 +289,7 @@ class EventCfg: #
     # -- robot
     randomized_hand_friction = EventTerm(
         func=mdp.randomize_joint_parameters,
-        min_step_count_between_reset=epochs_num*horizon_length,
-        mode="reset",
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names="a_.*"),
             "friction_distribution_params": (0.8, 1.2),
@@ -305,8 +303,7 @@ class EventCfg: #
 
     randomized_actuator_gains = EventTerm(
         func=mdp.randomize_actuator_gains,
-        mode="reset",
-        min_step_count_between_reset=epochs_num*horizon_length,
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "stiffness_distribution_params": (0.9, 1.1), # 官方默认是3.0
@@ -399,14 +396,6 @@ class TerminationsCfg:
 @configclass
 class CurriculumCfg:
     """课程学习配置 - 提供各种课程学习策略"""
-    pose_diff_penalty_weight = CurrTerm(
-        func=mdp.modify_reward_weight,
-        params={
-            "term_name": "pose_diff_penalty",
-            "weight": -0.02,
-            "num_steps": 300 * horizon_length,  # 300个epochs后
-        },
-    )
 
 
 @configclass
