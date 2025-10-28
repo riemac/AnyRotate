@@ -47,5 +47,6 @@ class ContinuousRotationCommandCfg(CommandTermCfg):
         """初始化后处理，根据 delta_angle 自动计算成功阈值（5%容差）"""
         # 如果未提供成功阈值，则根据 delta_angle 自动计算
         if self.orientation_success_threshold == NONE:
-            self.orientation_success_threshold = self.delta_angle / 20.0
+            # 参考 DirectRLEnv 实现，允许约 0.2rad 的姿态误差，同时兼容更大旋转步长
+            self.orientation_success_threshold = max(0.2, self.delta_angle / 2.0)
         print(f"成功阈值: {self.orientation_success_threshold}")

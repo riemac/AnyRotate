@@ -171,19 +171,13 @@ class CommandsCfg:
 @configclass
 class ActionsCfg:
     """动作配置 - 动作平滑"""
-    hand_joint_pos = mdp.RelativeJointPositionActionCfg(
+    hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
         asset_name="robot",
         joint_names=["a_.*"],  # 所有手部关节
-        scale=1 / 10,  # 增量缩放因子：控制每步的最大位置变化量
-        use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
+        scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
+        rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
+        alpha=1/10,  # 平滑系数
     )
-    # hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
-    #     asset_name="robot",
-    #     joint_names=["a_.*"],  # 所有手部关节
-    #     scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
-    #     rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
-    #     alpha=1/10,  # 平滑系数
-    # )
 
 @configclass
 class ObservationsCfg:
@@ -371,23 +365,57 @@ class RewardsCfg:
         weight=1.0,
         params={"object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1, "command_name": "goal_pose"},
     )
+    goal_position_distance = RewTerm(
+        func=leaphand_mdp.goal_position_distance,
+        weight=-10.0,
+        params={"object_cfg": SceneEntityCfg("object"), "command_name": "goal_pose"},
+    )
     success_bonus = RewTerm(
         func=leaphand_mdp.success_bonus,
         weight=250.0,
-        params={"object_cfg": SceneEntityCfg("object"), "command_name": "goal_pose"},
+        params={
+            "object_cfg": SceneEntityCfg("object"),
+            "command_name": "goal_pose",
+            "orientation_threshold": 0.2,
+            "position_threshold": 0.025,
+        },
+    )
+    fingertip_distance = RewTerm(
+        func=leaphand_mdp.fingertip_distance_penalty,
+        weight=-2.0,
+        params={
+            "robot_cfg": SceneEntityCfg("robot"),
+            "object_cfg": SceneEntityCfg("object"),
+            "fingertip_body_names": [
+                "fingertip",
+                "thumb_fingertip",
+                "fingertip_2",
+                "fingertip_3",
+            ],
+        },
     )
 
     # -- penalties
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-2.5e-5)
     action_l2 = RewTerm(func=mdp.action_l2, weight=-0.0001)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+    pose_diff = RewTerm(func=leaphand_mdp.pose_diff_penalty, weight=-0.3)
+    torque_l2 = RewTerm(func=leaphand_mdp.torque_l2_penalty, weight=-1e-5)
+    fall_penalty = RewTerm(
+        func=leaphand_mdp.fall_penalty,
+        weight=-10.0,
+        params={"object_cfg": SceneEntityCfg("object"), "command_name": "goal_pose", "fall_distance": 0.07},
+    )
 
 @configclass
 class TerminationsCfg:
     """终止条件配置"""
 
     # 物体掉落终止
-    object_falling = DoneTerm(func=leaphand_mdp.object_away_from_robot, params={"threshold": 0.3})
+    object_falling = DoneTerm(
+        func=leaphand_mdp.object_falling_termination,
+        params={"fall_dist": 0.08, "target_pos_offset": (0.0, -0.1, 0.56)},
+    )
 
     # 超时终止
     time_out = DoneTerm(func=mdp.time_out, time_out=True)

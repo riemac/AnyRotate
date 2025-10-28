@@ -66,7 +66,8 @@ def success_bonus(
     env: ManagerBasedRLEnv,
     command_name: str = "goal_pose",
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-    threshold: float = 0.05,
+    orientation_threshold: float = 0.2,
+    position_threshold: float = 0.025,
 ) -> torch.Tensor:
     """成功奖励 - 达到目标旋转时的稀疏奖励
 
@@ -89,15 +90,25 @@ def success_bonus(
     # 计算方向误差（轴角表示的 L2 范数）
     dtheta = math_utils.quat_error_magnitude(goal_quat_w, asset.data.root_quat_w)
 
-    # 计算成功奖励
-    success_reward = torch.where(dtheta <= threshold, torch.ones_like(dtheta), torch.zeros_like(dtheta))
+    # 计算位置误差（目标位置在环境坐标系下）
+    goal_pos = goal_pose[:, :3]
+    object_pos = asset.data.root_pos_w - env.scene.env_origins
+    goal_dist = torch.norm(object_pos - goal_pos, p=2, dim=-1)
+
+    # 计算成功奖励：姿态和位置双重满足
+    success_reward = torch.where(
+        (dtheta <= orientation_threshold) & (goal_dist <= position_threshold),
+        torch.ones_like(dtheta),
+        torch.zeros_like(dtheta),
+    )
 
     return success_reward
 
 def fall_penalty(
     env: ManagerBasedRLEnv,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-    fall_distance: float = 0.12
+    command_name: str = "goal_pose",
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    fall_distance: float = 0.07,
 ) -> torch.Tensor:
     """计算掉落惩罚
 
@@ -110,22 +121,76 @@ def fall_penalty(
         掉落惩罚 (num_envs,)
     """
     # 获取物体资产
-    asset: RigidObject = env.scene[asset_cfg.name]
+    asset: RigidObject = env.scene[object_cfg.name]
 
-    # 获取物体位置（世界坐标系）
-    object_pos_w = asset.data.root_pos_w
+    goal_pose = env.command_manager.get_command(command_name)
+    goal_pos = goal_pose[:, :3]
 
-    # 转换为环境局部坐标系（减去环境原点偏移）
-    object_pos = object_pos_w - env.scene.env_origins
+    object_pos = asset.data.root_pos_w - env.scene.env_origins
 
-    # 获取目标位置（环境局部坐标系中的手部附近位置）
-    target_pos = torch.tensor([0.0, -0.1, 0.56], device=env.device).expand(env.num_envs, -1)
+    distance = torch.norm(object_pos - goal_pos, p=2, dim=-1)
 
-    # 计算距离
-    distance = torch.norm(object_pos - target_pos, p=2, dim=-1)
-
-    # 如果距离超过阈值，返回惩罚
     return torch.where(distance > fall_distance, torch.ones_like(distance), torch.zeros_like(distance))
+
+
+def goal_position_distance(
+    env: ManagerBasedRLEnv,
+    command_name: str = "goal_pose",
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """物体与目标位置之间的欧氏距离。"""
+
+    asset: RigidObject = env.scene[object_cfg.name]
+
+    goal_pose = env.command_manager.get_command(command_name)
+    goal_pos = goal_pose[:, :3]
+
+    object_pos = asset.data.root_pos_w - env.scene.env_origins
+
+    return torch.norm(object_pos - goal_pos, p=2, dim=-1)
+
+
+def fingertip_distance_penalty(
+    env: ManagerBasedRLEnv,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    fingertip_body_names: Sequence[str] | None = None,
+) -> torch.Tensor:
+    """指尖到物体中心距离的平均值。"""
+
+    if fingertip_body_names is None or len(fingertip_body_names) == 0:
+        raise ValueError("fingertip_body_names 不能为空，需指定指尖 body 名称。")
+
+    robot: Articulation = env.scene[robot_cfg.name]
+    obj: RigidObject = env.scene[object_cfg.name]
+
+    if not hasattr(env, "_leaphand_fingertip_body_ids"):
+        body_ids, _ = robot.find_bodies(list(fingertip_body_names), preserve_order=True)
+        env._leaphand_fingertip_body_ids = torch.as_tensor(body_ids, device=env.device, dtype=torch.long)
+
+    fingertip_pos = robot.data.body_pos_w[:, env._leaphand_fingertip_body_ids]
+    fingertip_pos = fingertip_pos - env.scene.env_origins.unsqueeze(1)
+
+    object_pos = obj.data.root_pos_w - env.scene.env_origins
+
+    distances = torch.norm(fingertip_pos - object_pos.unsqueeze(1), p=2, dim=-1)
+
+    return torch.mean(distances, dim=-1)
+
+
+def torque_l2_penalty(
+    env: ManagerBasedRLEnv,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """关节力矩平方和，用于约束动作的用力大小。"""
+
+    robot: Articulation = env.scene[robot_cfg.name]
+    torque = getattr(robot.data, "computed_torque", None)
+
+    if torque is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    return torch.sum(torque ** 2, dim=-1)
 
 
 ###
