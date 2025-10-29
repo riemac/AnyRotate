@@ -176,7 +176,7 @@ class ActionsCfg:
         joint_names=["a_.*"],  # 所有手部关节
         scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
         rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
-        alpha=1/10,  # 平滑系数
+        alpha=1/24,  # 平滑系数
     )
 
 @configclass
@@ -213,8 +213,18 @@ class ObservationsCfg:
             self.concatenate_terms = True
 
     @configclass
+    class ProprioceptionObsCfg(PrivilegedObsCfg):
+        """Actor策略观测 - 仅包含灵巧手本体感受的信息"""
+        # 仅保留关节位置信息，上一步动作信息，目标位姿信息
+        def __post_init__(self):
+            super().__post_init__()
+            self.object_pos = None
+            self.object_quat = None
+            self.goal_quat_diff = None
+
+    @configclass
     class CriticCfg(PrivilegedObsCfg):
-        """Critic价值函数观测 - 仅包含真实世界可获取的信息"""
+        """Critic价值函数观测 - 包含大量仅仿真可用的特权信息"""
 
     # 观测组配置
     policy: ObsGroup = PrivilegedObsCfg(history_length=2)
