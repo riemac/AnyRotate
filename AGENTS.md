@@ -21,8 +21,8 @@
 
    * **信息源:** 不分先后，具情况选用
 
-     1. 本地代码（IsaacLab 源码、项目文档、示例，使用`codebase`检索工具）。
-     2. 官方文档（`context7` 工具，当查询isaacsim, physx, torchrl, rl_games等第三方库）。
+     1. 本地代码（IsaacLab,torchrl 源码、项目文档、示例，使用`codebase`检索工具）。
+     2. 官方文档（`context7`, `githubRepo`工具，当查询isaacsim, physx, rl_games等第三方库）。
      3. 网络搜索（`github`, `fetch`工具）。
 
 ## 工作区结构
@@ -55,7 +55,7 @@ IsaacLab/                    # IsaacLab官方核心框架目录（位于~/isaac/
 
 LEAP_Hand_Isaac_Lab/         # LeapHand官方手内重定向项目（供参考）（位于~/isaac/LEAP_Hand_Isaac_Lab）
 
-LEAP_Hand_Sim/               # 早期基于isaacgym的LeapHand官方手内旋转项目（可参考）（位于~/LEAP_Hand_Sim）
+rl/               # torchrl官方库（位于~/isaac/rl)
 ```
 
 ## 工作流程
