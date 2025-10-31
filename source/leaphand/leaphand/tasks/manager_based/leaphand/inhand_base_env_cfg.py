@@ -160,7 +160,7 @@ class CommandsCfg:
         asset_name="object",
         resampling_time_range=(1e6, 1e6),  # 不基于时间重采样
         init_pos_offset=(0.0, 0.0, 0.0),
-        rotation_axis="z",  # 固定Z轴旋转
+        rotation_axis="x",  # 固定x轴旋转
         delta_angle=math.pi / 8.0,  # 每次旋转22.5度
         make_quat_unique=True,
         update_goal_on_success=True,
@@ -452,8 +452,8 @@ class InHandObjectEnvCfg(ManagerBasedRLEnvCfg):
         ),
         physx=PhysxCfg(
             bounce_threshold_velocity=0.2,
-            gpu_max_rigid_contact_count=2**18,
-            gpu_max_rigid_patch_count=2**18,
+            gpu_max_rigid_contact_count=2**23,  # 最大接触点位置数，这个数值会影响仿真稳定性。如果并行环境数增加，需要相应增加这个数值，否则容易出现CUDA错误
+            gpu_max_rigid_patch_count=2**23,  # 最大接触块数
         ),
     )
     seed: int | None = 42  # 确保每次训练都是可重复的
