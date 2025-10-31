@@ -75,7 +75,7 @@ from isaaclab.envs import (
 )
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.io import dump_pickle, dump_yaml
+from isaaclab.utils.io import dump_yaml
 
 from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
 
@@ -142,11 +142,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     wandb_project = config_name if args_cli.wandb_project_name is None else args_cli.wandb_project_name
     experiment_name = log_dir if args_cli.wandb_name is None else args_cli.wandb_name
 
-    # 将 env 和 agent 配置持久化到磁盘，便于复现与调试（YAML + pickle）
+    # 将 env 和 agent 配置持久化到磁盘，便于复现与调试
     dump_yaml(os.path.join(log_root_path, log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_root_path, log_dir, "params", "agent.yaml"), agent_cfg)
-    dump_pickle(os.path.join(log_root_path, log_dir, "params", "env.pkl"), env_cfg)
-    dump_pickle(os.path.join(log_root_path, log_dir, "params", "agent.pkl"), agent_cfg)
 
     # ======= 从 agent_cfg 读取训练相关设置 =======
     rl_device = agent_cfg["params"]["config"]["device"]
