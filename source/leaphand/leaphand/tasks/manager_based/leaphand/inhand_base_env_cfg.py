@@ -4,10 +4,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """LeapHand连续旋转任务环境配置 - ManagerBasedRLEnv架构
-- 该配置类的奖励项将参考LEAP_Hand_Sim中的奖励项，并和先前自设的奖励项相结合（连续旋转速度奖励）
+- 该配置类的奖项参考LEAP_Hand_Isaac_Lab，尽管任务不同
+- 主要增加一个连续旋转目标达成的稀疏奖励项
 """
 
 import math
+from shlex import join
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
@@ -27,6 +29,7 @@ from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.noise import AdditiveGaussianNoiseCfg as Gnoise
 
 from isaaclab.envs.ui import ManagerBasedRLEnvWindow
 from isaaclab.envs.common import ViewerCfg
@@ -35,17 +38,17 @@ from isaaclab.devices.openxr import XrCfg
 import isaaclab.envs.mdp as mdp
 from leaphand.robots.leap import LEAP_HAND_CFG
 from leaphand.tasks.manager_based.leaphand.mdp import observations_privileged as priv_obs
-from leaphand.tasks.manager_based.leaphand.mdp.rewards import pose_diff_penalty
+from leaphand.tasks.manager_based.leaphand.mdp.rewards import pose_diff_penalty, track_orientation_inv_l2
 from . import mdp as leaphand_mdp
-from .mdp.commands import RotationAxisCommandCfg
+
+# from .mdp.actions import LinearDecayAlphaEMAJointPositionToLimitsActionCfg
 
 # 全局超参数(来源于rl_games_ppo_cfg.yaml)
 horizon_length = 32
+epochs_num = 5 # 与horizon_length配合以确定数据更新频率
 
 # 使用Isaac Lab内置的cube资产
 object_usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd"
-
-# Scene definition
 
 @configclass
 class InHandSceneCfg(InteractiveSceneCfg):
@@ -54,7 +57,9 @@ class InHandSceneCfg(InteractiveSceneCfg):
     # 地面
     ground = AssetBaseCfg(
         prim_path="/World/ground",
-        spawn=sim_utils.GroundPlaneCfg(),
+        spawn=sim_utils.GroundPlaneCfg(
+            usd_path="/home/hac/isaac/isaacsim_assets/Assets/Isaac/5.0/Isaac/Environments/Grid/default_environment.usd"
+        ),
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.1)),
     )
 
@@ -151,239 +156,100 @@ class InHandSceneCfg(InteractiveSceneCfg):
 @configclass
 class CommandsCfg:
     """Commands specifications for the MDP."""
-    rotation_axis = RotationAxisCommandCfg(
-        rotation_axis_mode="z_axis",  # 默认Z轴旋转
+    goal_pose = leaphand_mdp.ContinuousRotationCommandCfg(
+        asset_name="object",
         resampling_time_range=(1e6, 1e6),  # 不基于时间重采样
-        change_rotation_axis_interval=0,  # 不自动更换旋转轴
-        rotation_axis_noise=0.05,  # 轻微噪声
-        debug_vis=True,  # 启用旋转轴可视化
+        init_pos_offset=(0.0, 0.0, 0.0),
+        rotation_axis="x",  # 固定x轴旋转
+        delta_angle=math.pi / 8.0,  # 每次旋转22.5度
+        make_quat_unique=True,
+        update_goal_on_success=True,
+        # orientation_success_threshold 将由 __post_init__ 自动计算为 delta_angle/20
     )
  
  
 @configclass
 class ActionsCfg:
-    # hand_joint_pos = mdp.RelativeJointPositionActionCfg(
-    #     asset_name="robot",
-    #     joint_names=["a_.*"],  # 所有手部关节
-    #     scale=1 / 1,  # 增量缩放因子：控制每步的最大位置变化量
-    #     use_zero_offset=True,  # 使用零偏移（相对控制的标准设置）
-    # )
+    """动作配置 - 动作平滑"""
     hand_joint_pos = mdp.EMAJointPositionToLimitsActionCfg(
         asset_name="robot",
         joint_names=["a_.*"],  # 所有手部关节
         scale=1.0,  # 动作缩放因子（对EMA类型影响不大，因为有rescale_to_limits）
         rescale_to_limits=True,  # 将[-1,1]动作自动映射到关节限制
-        alpha=1/10,  # 平滑系数
+        alpha=1/24,  # 平滑系数
     )
-
 
 @configclass
 class ObservationsCfg:
     """观测配置 - 支持非对称Actor-Critic"""
 
     @configclass
-    class PolicyCfg(ObsGroup):
-        """Actor策略观测 - 真实世界可获取的信息"""
+    class PrivilegedObsCfg(ObsGroup):
+        """Actor策略观测 - 包含大量仅仿真可用的特权信息"""
+        # -- robot terms
         joint_pos = ObsTerm(
             func=mdp.joint_pos_limit_normalized,
             params={"asset_cfg": SceneEntityCfg("robot")},
         )
 
-        joint_pos_targets = ObsTerm(
-            func=leaphand_mdp.joint_pos_targets,
-            params={"asset_cfg": SceneEntityCfg("robot")},
+        # -- object terms
+        object_pos = ObsTerm(func=mdp.root_pos_w, noise=Gnoise(std=0.002), params={"asset_cfg": SceneEntityCfg("object")})
+        object_quat = ObsTerm( # IDEA:该项添加噪音可能会破坏归一化约束？
+            func=mdp.root_quat_w, params={"asset_cfg": SceneEntityCfg("object"), "make_quat_unique": False}
         )
 
-        rotation_axis = ObsTerm(
-            func=mdp.generated_commands,
-            params={"command_name": "rotation_axis"},
-            history_length=0,  # 明确禁用历史，始终使用当前值
+        # -- command terms
+        goal_pose = ObsTerm(func=mdp.generated_commands, params={"command_name": "goal_pose"})
+        goal_quat_diff = ObsTerm(
+            func=leaphand_mdp.goal_quat_diff,
+            params={"asset_cfg": SceneEntityCfg("object"), "command_name": "goal_pose", "make_quat_unique": True},
         )
 
-        phase = ObsTerm(
-            func=leaphand_mdp.phase,
-            params={"period": 2.0},
-        )
+        # -- action terms
+        last_action = ObsTerm(func=mdp.last_action) # 返回的是 策略输出的规范化后值（通常是 -1 到 1）
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
 
     @configclass
-    class CriticCfg(ObsGroup):
-        """Critic价值函数观测 - 包含特权信息"""
-        joint_pos = ObsTerm(
-            func=mdp.joint_pos_limit_normalized,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
+    class ProprioceptionObsCfg(PrivilegedObsCfg):
+        """Actor策略观测 - 仅包含灵巧手本体感受的信息"""
+        # 仅保留关节位置信息，上一步动作信息，目标位姿信息
+        def __post_init__(self):
+            super().__post_init__()
+            self.object_pos = None
+            self.object_quat = None
+            self.goal_quat_diff = None
 
-        joint_pos_targets = ObsTerm(
-            func=leaphand_mdp.joint_pos_targets,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-
-        rotation_axis = ObsTerm(
-            func=mdp.generated_commands,
-            params={"command_name": "rotation_axis"},
-            history_length=0,  # 明确禁用历史，始终使用当前值
-        )
-
-        phase = ObsTerm(
-            func=leaphand_mdp.phase,
-            params={"period": 2.0},
-        )
-
-        object_pos_w = ObsTerm(
-            func=mdp.root_pos_w,
-            params={"asset_cfg": SceneEntityCfg("object")},
-        )
-
-        object_rot_w = ObsTerm(
-            func=mdp.root_quat_w,
-            params={"asset_cfg": SceneEntityCfg("object")},
-        )
-
-        # 域随机化的特权观测（仅critic可见）：
-        # 以“当前/默认”的缩放比为核心特征，并对每组关节做均值/标准差统计，保证输入维度稳定。
-        robot_stiffness_stats = ObsTerm(
-            func=priv_obs.robot_joint_stiffness_stats,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-        robot_damping_stats = ObsTerm(
-            func=priv_obs.robot_joint_damping_stats,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-        robot_armature_stats = ObsTerm(
-            func=priv_obs.robot_joint_armature_stats,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-        robot_joint_friction_stats = ObsTerm(
-            func=priv_obs.robot_joint_friction_stats,
-            params={"asset_cfg": SceneEntityCfg("robot")},
-        )
-        object_mass_scale = ObsTerm(
-            func=priv_obs.object_total_mass_scale,
-            params={"object_cfg": SceneEntityCfg("object")},
-        )
-        object_material = ObsTerm(
-            func=priv_obs.object_material_friction_restitution,
-            params={"object_cfg": SceneEntityCfg("object")},
-        )
-
-        object_scale_ratio = ObsTerm(
-            func=priv_obs.object_scale_ratio,
-            params={"object_cfg": SceneEntityCfg("object")},
-        )
-        object_com_offset = ObsTerm(
-            func=priv_obs.object_com_offset,
-            params={"object_cfg": SceneEntityCfg("object")},
-        )
+    @configclass
+    class CriticCfg(PrivilegedObsCfg):
+        """Critic价值函数观测 - 包含大量仅仿真可用的特权信息"""
 
     # 观测组配置
-    policy: PolicyCfg = PolicyCfg(history_length=3)
-    critic: CriticCfg = CriticCfg(history_length=3)
-
-
-@configclass
-class RewardsCfg:
-    """奖励配置 - 连续旋转任务奖励机制"""
-    # rotate_reward = RewTerm(
-    #     func=leaphand_mdp.rotate_angvel_clipped,
-    #     weight=1.25,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("object"),
-    #         "clip_min": -0.25,
-    #         "clip_max": 0.25,
-    #     },
-    # )
-    rotation_velocity = RewTerm(
-        func=leaphand_mdp.rotation_velocity,
-        weight=10.0,
-        params={
-            "asset_cfg": SceneEntityCfg("object"),
-            "visualize_actual_axis": True,  # 启用实际旋转轴可视化
-            "target_angular_speed": 1,   # 目标角速度 (rad/s)
-            "positive_decay": 3.0,        # 正向奖励的指数衰减因子
-            "negative_penalty_weight": 0.5,  # 负向惩罚权重
-        },
-    )
-
-    object_linvel_penalty = RewTerm(
-        func=leaphand_mdp.object_linvel_l1_penalty,
-        weight=-0.3,
-        params={"object_cfg": SceneEntityCfg("object")},
-    )
-
-    pose_diff_penalty = RewTerm( # TODO：该项惩罚有些过高，后期应调整
-        func=leaphand_mdp.pose_diff_penalty,
-        weight=-0.1,  
-        params={"asset_cfg": SceneEntityCfg("robot")},
-    )
-
-    hand_torque_penalty = RewTerm(
-        func=mdp.joint_torques_l2,
-        weight=-0.1,
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-        },
-    )
-
-    hand_work_penalty = RewTerm(
-        func=leaphand_mdp.work_penalty,
-        weight=-0.01,
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-        },
-    )
-
-    object_fall_penalty = RewTerm(
-        func=leaphand_mdp.object_fall_penalty, 
-        weight=-20,
-        params={
-            "asset_cfg": SceneEntityCfg("object"),
-            "z_threshold": 0.10,
-        },
-    )
-
-
-@configclass
-class TerminationsCfg:
-    """终止条件配置"""
-
-    # 物体掉落终止
-    object_falling = DoneTerm(
-        # 使用 z 轴高度差判定的终止函数，和 object_fall_penalty 的 z_threshold 逻辑保持一致
-        func=leaphand_mdp.object_falling_z_termination,
-        params={
-            "object_cfg": SceneEntityCfg("object"),
-            "z_threshold": 0.10,
-        },
-    )
-
-    # 超时终止
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    policy: ObsGroup = PrivilegedObsCfg(history_length=2)
+    critic: ObsGroup = CriticCfg(history_length=2)
 
 
 @configclass
 class EventCfg: #
     """域随机化配置 - 集成官方LeapHand的RL技巧"""
-    reset_scene_to_default = EventTerm(
-        func=mdp.reset_scene_to_default,
-        mode="reset"
-    )
-
+    
+    # -- object
     randomized_object_mass = EventTerm(
         func=mdp.randomize_rigid_body_mass,
-        mode="reset",
-        min_step_count_between_reset=720,
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "mass_distribution_params": (0.25, 1.2),
-            "operation": "scale",  # NOTE: 这个是对质量乘法缩放，缩放系数为上面那个
+            "operation": "scale", # 这个是对质量乘法缩放，缩放系数为上面那个
             "distribution": "uniform",
         },
     )
 
     randomized_object_com = EventTerm(
         func=leaphand_mdp.randomize_rigid_object_com,
-        mode="reset",
-        min_step_count_between_reset=720,
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("object"),
             "com_range": {"x": (-0.01, 0.01), "y": (-0.01, 0.01), "z": (-0.01, 0.01)},
@@ -399,30 +265,41 @@ class EventCfg: #
         },
     )
 
+
     randomized_object_friction = EventTerm(
         func=mdp.randomize_rigid_body_material,
-        min_step_count_between_reset=720,
-        mode="reset",
-        params={
+        mode="startup",
+        params={ # 从 range 里均匀采样
             "asset_cfg": SceneEntityCfg("object"),
-            "static_friction_range": (0.2, 0.8),  # 塑料、橡胶一般这么多
-            "dynamic_friction_range": (0.15, 0.5),
-            "restitution_range": (0.0, 0.1),
+            "static_friction_range": (0.2, 1.0), # 塑料、橡胶一般这么多
+            "dynamic_friction_range": (0.15, 0.6),
+            "restitution_range": (0.0, 0.1), # 不提供的话默认(0,0)
             "num_buckets": 250,
             "make_consistent": True,  # 确保 dynamic_friction <= static_friction
         },
     )
 
+    randomized_object_force_disturbance = EventTerm(
+        func=mdp.apply_external_force_torque,
+        mode="reset",
+        min_step_count_between_reset=epochs_num*horizon_length,
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "force_range": (-1.0, 1.0),
+            "torque_range": (-0.1, 0.1),
+        },
+    )
+
+    # -- robot
     randomized_hand_friction = EventTerm(
         func=mdp.randomize_joint_parameters,
-        min_step_count_between_reset=720,
-        mode="reset",
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names="a_.*"),
             "friction_distribution_params": (0.8, 1.2),
             "armature_distribution_params": (0.6, 1.5),
-            "lower_limit_distribution_params": (0.975, 1.025),  # NOTE: 这里是关节限位范围，不是关节阻尼范围
-            "upper_limit_distribution_params": (0.975, 1.025),  # NOTE: 这里是关节限位范围，不是关节阻尼范围
+            "lower_limit_distribution_params": (0.975, 1.025),  # 这里是关节限位范围，不是关节阻尼范围
+            "upper_limit_distribution_params": (0.975, 1.025),
             "operation": "scale",
             "distribution": "uniform",
         },
@@ -430,21 +307,20 @@ class EventCfg: #
 
     randomized_actuator_gains = EventTerm(
         func=mdp.randomize_actuator_gains,
-        mode="reset",
-        min_step_count_between_reset=720,
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "stiffness_distribution_params": (0.9, 1.1),
-            "damping_distribution_params": (0.8, 1.2),
+            "stiffness_distribution_params": (0.9, 1.1), # 官方默认是3.0
+            "damping_distribution_params": (0.8, 1.2), # 官方默认是0.1
             "distribution": "uniform",
-            "operation": "scale",
+            "operation": "scale", # 缩放
         },
     )
 
     randomized_robot_force_disturbance = EventTerm(
         func=mdp.apply_external_force_torque,
         mode="reset",
-        min_step_count_between_reset=720,
+        min_step_count_between_reset=epochs_num*horizon_length,
         params={
             "asset_cfg": SceneEntityCfg(
                 name="robot",
@@ -456,54 +332,128 @@ class EventCfg: #
         },
     )
 
-    randomized_object_force_disturbance = EventTerm(
-        func=mdp.apply_external_force_torque,
-        mode="reset",
-        min_step_count_between_reset=720,
+    robot_scale_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
         params={
-            "asset_cfg": SceneEntityCfg("object"),
-            "force_range": (-1.0, 1.0),
-            "torque_range": (-0.1, 0.1),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "mass_distribution_params": (0.95, 1.05), # 每个机器人连杆的质量都乘以不同随机的缩放系数
+            "operation": "scale",
+            "distribution": "uniform",
+        },
+    )
+    
+    # -- reset
+    reset_object = EventTerm(
+        func=mdp.reset_root_state_uniform,
+        mode="reset",
+        params={ # rpy角是按照Isaaclab中的坐标系惯例的正方向来的
+            "pose_range": {"x": [-0.01, 0.01], "y": [-0.01, 0.01], "z": [-0.01, 0.01],
+                           "roll": [-0.0, 0.0], "pitch": [-0.0, 0.0], "yaw": [-math.pi, math.pi]},
+            "velocity_range": {},
+            "asset_cfg": SceneEntityCfg("object", body_names=".*"),
+        },
+    )
+    
+    reset_robot_joints = EventTerm(
+        func=mdp.reset_joints_by_offset,
+        mode="reset",
+        params={
+            "position_range": (-0.2, 0.2),
+            "velocity_range": (0.0, 0.0),
         },
     )
 
 
 @configclass
-class CurriculumCfg:
-    """课程学习配置 - 提供各种课程学习策略"""
-    pose_diff_penalty_weight = CurrTerm(
-        func=mdp.modify_reward_weight,
-        params={
-            "term_name": "pose_diff_penalty",
-            "weight": -0.02,
-            "num_steps": 300*horizon_length # 300个epochs后
-        }
+class RewardsCfg:
+    """奖励配置 - 连续旋转任务奖励机制"""
+
+    # -- task
+    track_orientation_inv_l2 = RewTerm(
+        func=leaphand_mdp.track_orientation_inv_l2,
+        weight=1.0,
+        params={"object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1, "command_name": "goal_pose"},
     )
+    goal_position_distance = RewTerm(
+        func=leaphand_mdp.goal_position_distance,
+        weight=-10.0,
+        params={"object_cfg": SceneEntityCfg("object"), "command_name": "goal_pose"},
+    )
+    success_bonus = RewTerm(
+        func=leaphand_mdp.success_bonus,
+        weight=250.0,
+        params={
+            "object_cfg": SceneEntityCfg("object"),
+            "command_name": "goal_pose",
+            "orientation_threshold": 0.2,
+            "position_threshold": 0.025,
+        },
+    )
+    fingertip_distance = RewTerm(
+        func=leaphand_mdp.fingertip_distance_penalty,
+        weight=-2.0,
+        params={
+            "robot_cfg": SceneEntityCfg("robot"),
+            "object_cfg": SceneEntityCfg("object"),
+            "fingertip_body_names": [
+                "fingertip",
+                "thumb_fingertip",
+                "fingertip_2",
+                "fingertip_3",
+            ],
+        },
+    )
+
+    # -- penalties
+    joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-2.5e-5)
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.0001)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+    pose_diff = RewTerm(func=leaphand_mdp.pose_diff_penalty, weight=-0.3)
+    torque_l2 = RewTerm(func=leaphand_mdp.torque_l2_penalty, weight=-1e-5)
+    fall_penalty = RewTerm(
+        func=leaphand_mdp.fall_penalty,
+        weight=-10.0,
+        params={"object_cfg": SceneEntityCfg("object"), "command_name": "goal_pose", "fall_distance": 0.07},
+    )
+
+@configclass
+class TerminationsCfg:
+    """终止条件配置"""
+
+    # 物体掉落终止
+    object_falling = DoneTerm(
+        func=leaphand_mdp.object_falling_termination,
+        params={"fall_dist": 0.08, "target_pos_offset": (0.0, -0.1, 0.56)},
+    )
+
+    # 超时终止
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
 
 @configclass
-class InHandEnvV1Cfg(ManagerBasedRLEnvCfg):
+class CurriculumCfg:
+    """课程学习配置 - 提供各种课程学习策略"""
+
+
+@configclass
+class InHandObjectEnvCfg(ManagerBasedRLEnvCfg):
     """LeapHand连续旋转任务环境配置类 - ManagerBasedRLEnv架构"""
     ui_window_class_type: type | None = ManagerBasedRLEnvWindow
     is_finite_horizon: bool = True
     # 如果replicate_physics=True，场景会对资产进行复制复用，多个环境实例共享底层资产/物理定义。这会导致 USD 层面的变更无法“按 env 维度独立应用”
     # 注意：字段名需为小写的 'scene' 以符合 ManagerBasedRLEnvCfg 的校验
     scene: InteractiveSceneCfg = InHandSceneCfg(num_envs=100, env_spacing=0.75, replicate_physics=False)
-    decimation: int = 4
-    episode_length_s: float = 60.0
     viewer: ViewerCfg = ViewerCfg()
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 120,
-        device="cuda:0",
-        render_interval=decimation,
         physics_material=RigidBodyMaterialCfg(
-            static_friction=0.5,  # 被randomized_object_friction覆盖
+            static_friction=0.5,  # 被 randomized_object_friction 覆盖
             dynamic_friction=0.5,
         ),
         physx=PhysxCfg(
             bounce_threshold_velocity=0.2,
-            gpu_max_rigid_contact_count=2**18,
-            gpu_max_rigid_patch_count=2**18,
+            gpu_max_rigid_contact_count=2**23,  # 最大接触点位置数，这个数值会影响仿真稳定性。如果并行环境数增加，需要相应增加这个数值，否则容易出现CUDA错误
+            gpu_max_rigid_patch_count=2**23,  # 最大接触块数
         ),
     )
     seed: int | None = 42  # 确保每次训练都是可重复的
@@ -512,14 +462,27 @@ class InHandEnvV1Cfg(ManagerBasedRLEnvCfg):
     wait_for_textures: bool = True
     xr: XrCfg | None = None
 
+    # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
+
+    # MDP settings
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
+
+    # Curriculum settings
     curriculum: CurriculumCfg = CurriculumCfg()
 
     def __post_init__(self):
         super().__post_init__()
         """后初始化钩子 - 可用于自定义验证或调整配置"""
+        # general settings
+        self.decimation = 4
+        self.episode_length_s = 30.0
+        # simulation settings
+        self.sim.dt = 1.0 / 120.0
+        self.sim.render_interval = self.decimation
+        # change viewer settings
+        self.viewer.eye = (2.0, 2.0, 2.0)

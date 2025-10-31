@@ -51,13 +51,21 @@ params:
       regularizer:
         name: None          # 不使用正则化
 
+    rnn:  # 循环神经网络配置
+      name: gru  # 使用GRU单元
+      units: 256  # GRU隐藏单元数
+      layers: 1  # GRU层数
+      before_mlp: true  # RNN是否在MLP之前
+      concat_input: true  # 是否连接输入
+      layer_norm: true  # 是否使用层归一化
+
   # 模型加载配置
   load_checkpoint: False  # 是否加载检查点
   load_path: ''          # 检查点加载路径
 
   # 训练配置
   config:
-    name: leaphand_continuous_rot  # 任务名称
+    name: leaphand_object_rot  # 任务名称
     env_name: rlgpu               # 使用GPU训练环境
     device: 'cuda:0'              # 使用第一块GPU
     device_name: 'cuda:0'         # 设备名称
@@ -75,21 +83,27 @@ params:
     tau: 0.95                    # GAE-Lambda参数
     learning_rate: 5e-4          # 学习率
     lr_schedule: adaptive        # 自适应学习率调整
-    schedule_type: legacy        # 使用传统调度策略
+    schedule_type: standard      
     kl_threshold: 0.01           # KL散度阈值，控制策略更新幅度
     score_to_win: 100000          # 获胜分数阈值
-    max_epochs: 1000             # 最大训练轮数（采集数据->更新模型的完整流程）
-    save_best_after: 100         # 100轮后开始保存最佳模型
-    save_frequency: 50          # 每50轮保存一次
+    max_epochs: 5000             # 最大训练轮数（采集数据->更新模型的完整流程）
+    save_best_after: 200         # 100轮后开始保存最佳模型
+    save_frequency: 100          # 每50轮保存一次
     print_stats: True            # 打印训练统计信息
     grad_norm: 1.0               # 梯度裁剪范数
-    entropy_coef: 0.005          # 熵正则化系数，用于鼓励探索
+    entropy_coef: 0.002          # 熵正则化系数，用于鼓励探索
     truncate_grads: True         # 启用梯度裁剪
     e_clip: 0.2                  # PPO裁剪范围
-    horizon_length: 240         # 每horizon_length个step进行一次策略更新
-    minibatch_size: 64           # 增大批量以适应更长的horizon
-    mini_epochs: 8               # 每次更新的迭代次数（采集数据的循环利用次数）
-    critic_coef: 2               # Critic损失权重
+    horizon_length: 32         # 每horizon_length个step进行一次策略更新
+    minibatch_size: 800           # 增大批量以适应更长的horizon
+    mini_epochs: 5               # 每次更新的迭代次数（采集数据的循环利用次数）
+    critic_coef: 4               # Critic损失权重
     clip_value: True             # 是否裁剪价值估计
     clip_actions: False          # 是否在训练时裁剪动作
+    seq_length: 4               # 序列长度
     bounds_loss_coef: 0.0001     # 动作边界损失系数
+
+    player:  # 测试配置
+      deterministic: True  # 是否使用确定性策略
+      games_num: 100000  # 测试游戏次数
+      print_stats: True  # 是否打印统计信息
