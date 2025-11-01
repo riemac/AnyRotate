@@ -21,5 +21,6 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.inhand_base_env_cfg:InHandObjectEnvCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+        "torchrl_cfg_entry_point": f"{agents.__name__}:torchrl_ppo_cfg.yaml",
     },
 )
