@@ -46,9 +46,6 @@ parser.add_argument("--video_length", type=int, default=200, help="Length of rec
 parser.add_argument("--video_interval", type=int, default=1000, help="Interval between video recordings (in steps).")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
-parser.add_argument(
-    "--agent", type=str, default="torchrl_cfg_entry_point", help="Name of the TorchRL agent configuration entry point."
-)
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to a saved TorchRL checkpoint (.pt).")
 parser.add_argument(
     "--use_last_checkpoint",
@@ -97,8 +94,10 @@ from common import build_actor, build_critic, flatten_size, select_spec, split_k
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
+# TorchRL 配置入口点（与环境注册中的键名匹配）
+agent_cfg_entry_point = "torchrl_cfg_entry_point"
 
-@hydra_task_config(args_cli.task, args_cli.agent)
+@hydra_task_config(args_cli.task, agent_cfg_entry_point)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: dict):
     if not is_torchrl_available():
         raise ImportError("TorchRL 未安装，无法回放策略。请先安装 isaaclab_rl[torchrl] 依赖。")

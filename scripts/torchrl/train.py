@@ -93,9 +93,6 @@ parser.add_argument("--video_length", type=int, default=200, help="Length of the
 parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
-parser.add_argument(
-    "--agent", type=str, default="torchrl_cfg_entry_point", help="Name of the RL agent configuration entry point."
-)
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--total_frames", type=int, default=None, help="Total environment frames to collect for PPO.")
 parser.add_argument("--log_interval", type=int, default=10, help="How often (in updates) to log scalars.")
@@ -151,7 +148,10 @@ from common import build_actor, build_critic, flatten_size, prepare_optimizer, s
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
-@hydra_task_config(args_cli.task, args_cli.agent)
+# TorchRL 配置入口点（与环境注册中的键名匹配）
+agent_cfg_entry_point = "torchrl_cfg_entry_point"
+
+@hydra_task_config(args_cli.task, agent_cfg_entry_point)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: dict):
     """主训练函数，使用 TorchRL 的 PPO 算法训练强化学习策略。
     
