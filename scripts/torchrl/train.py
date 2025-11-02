@@ -233,19 +233,34 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     torchrl_env.set_seed(seed)
 
     # 获取观测和动作的键名（支持嵌套字典）
-    obs_key = split_key(agent_cfg.get("obs_key", "observation"))
+    # 检测是否为非对称 Actor-Critic（有 policy/critic 观测组）
+    obs_spec_keys = list(torchrl_env.observation_spec.keys())
+    has_asymmetric_obs = "policy" in obs_spec_keys and "critic" in obs_spec_keys
+    
+    if has_asymmetric_obs:
+        # 非对称观测：Actor 使用 policy 观测，Critic 使用 critic 观测
+        policy_obs_key = split_key(agent_cfg.get("policy_obs_key", "policy"))
+        critic_obs_key = split_key(agent_cfg.get("critic_obs_key", "critic"))
+        obs_key = policy_obs_key  # Actor 默认使用 policy 观测
+    else:
+        # 对称观测：Actor 和 Critic 使用相同观测
+        obs_key = split_key(agent_cfg.get("obs_key", "observation"))
+        policy_obs_key = critic_obs_key = obs_key
+    
     action_key = split_key(agent_cfg.get("action_key", "action"))
 
     # 获取观测和动作的规格说明
-    obs_spec = select_spec(torchrl_env.observation_spec, obs_key)
+    policy_obs_spec = select_spec(torchrl_env.observation_spec, policy_obs_key)
+    critic_obs_spec = select_spec(torchrl_env.observation_spec, critic_obs_key) if has_asymmetric_obs else policy_obs_spec
     action_spec = select_spec(torchrl_env.action_spec, action_key)
-    obs_dim = flatten_size(obs_spec.shape)
+    policy_obs_dim = flatten_size(policy_obs_spec.shape)
+    critic_obs_dim = flatten_size(critic_obs_spec.shape)
 
     # 构建策略网络（Actor）和价值网络（Critic）
     policy_cfg = agent_cfg.get("policy_model", {})
     value_cfg = agent_cfg.get("value_model", {})
-    policy_module = build_actor(obs_key, action_key, action_spec, obs_dim, policy_cfg, device)
-    value_module = build_critic(obs_key, obs_dim, value_cfg, device)
+    policy_module = build_actor(policy_obs_key, action_key, action_spec, policy_obs_dim, policy_cfg, device)
+    value_module = build_critic(critic_obs_key, critic_obs_dim, value_cfg, device)
 
     # 获取 PPO 算法的超参数
     loss_cfg = agent_cfg.get("ppo", {})
