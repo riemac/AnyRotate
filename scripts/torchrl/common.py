@@ -47,7 +47,6 @@ Example:
 
 from __future__ import annotations
 
-import numpy as np
 import torch
 import torch.nn as nn
 from tensordict.nn import TensorDictModule
@@ -87,7 +86,26 @@ def select_spec(composite, key: tuple[str, ...]):
 
 
 def flatten_size(shape: torch.Size | tuple[int, ...]) -> int:
-    return int(np.prod(tuple(shape))) if len(shape) > 0 else 1
+    """计算张量形状的总元素数量。
+    
+    使用 PyTorch 原生操作而非 NumPy，避免不必要的数据类型转换。
+    
+    Args:
+        shape: 张量形状，可以是 torch.Size 或 tuple
+        
+    Returns:
+        总元素数量
+    """
+    if len(shape) == 0:
+        return 1
+    # 使用 PyTorch Size 的 numel() 方法
+    if isinstance(shape, torch.Size):
+        return shape.numel()
+    # 使用 Python 内置函数计算乘积
+    result = 1
+    for dim in shape:
+        result *= dim
+    return result
 
 
 def build_actor(

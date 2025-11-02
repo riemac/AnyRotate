@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-基于Isaac Lab框架的机器人仿真环境开发规范文档。本项目专注于LeapHand机械手的强化学习训练环境构建。
+基于Isaac Lab框架的机器人仿真环境开发规范文档。本项目专注于LeapHand灵巧手的强化学习训练环境构建。
 
 ## 核心原则
 
@@ -57,6 +57,10 @@ LEAP_Hand_Isaac_Lab/         # LeapHand官方手内重定向项目（供参考�
 
 rl/               # torchrl官方库（位于~/isaac/rl)
 ```
+
+### 研究进展
+
+目前正在做Leaphand手内旋转方面的研究，主要环境架构为ManagerBasedRLEnv。同时正集成第三方学习库TorchRL，处于不断debug、优化的阶段。
 
 ## 工作流程
 

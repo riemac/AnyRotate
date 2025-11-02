@@ -112,7 +112,7 @@ if args_cli.video:
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
-sys.argv = [sys.argv[0]] + hydra_args
+sys.argv = [sys.argv[0]] + hydra_args  # 清理命令行参数，只保留 Hydra 需要的参数，避免后续 Hydra 配置系统解析时出现冲突或冗余参数
 
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
@@ -121,7 +121,6 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import gymnasium as gym
-import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
@@ -381,7 +380,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         _accumulate_metrics(metrics_accumulator, losses)
 
                 # 更新全局帧计数器
-                frames_in_batch = int(np.prod(data.batch_size))
+                frames_in_batch = data.batch_size.numel()
                 global_frames += frames_in_batch
                 update_idx += 1
 
