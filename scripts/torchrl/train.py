@@ -230,6 +230,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # 将 Gymnasium 环境转换为 TorchRL 环境
     torchrl_env = make_torchrl_env(env, device=device)  # type: ignore[arg-type]
     torchrl_env.set_seed(seed)
+    
+    # 保存原始环境的 max_episode_length 用于数据收集配置
+    max_episode_length = getattr(env.unwrapped, 'max_episode_length', None)
 
     # 获取观测和动作的键名（支持嵌套字典）
     # 检测是否为非对称 Actor-Critic（有 policy/critic 观测组）
@@ -251,14 +254,27 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # 获取观测和动作的规格说明
     policy_obs_spec = select_spec(torchrl_env.observation_spec, policy_obs_key)
     critic_obs_spec = select_spec(torchrl_env.observation_spec, critic_obs_key) if has_asymmetric_obs else policy_obs_spec
-    action_spec = select_spec(torchrl_env.action_spec, action_key)
-    policy_obs_dim = flatten_size(policy_obs_spec.shape)
-    critic_obs_dim = flatten_size(critic_obs_spec.shape)
+    
+    # 对于 action_spec，使用 TorchRL 环境的 action_spec_unbatched 属性
+    # 这是不含 num_envs 维度的 spec，符合 ProbabilisticActor 和 TanhNormal 的要求
+    action_spec_unbatched = torchrl_env.action_spec_unbatched
+    
+    # 调试输出
+    print(f"[DEBUG] policy_obs_spec.shape = {policy_obs_spec.shape}")
+    print(f"[DEBUG] critic_obs_spec.shape = {critic_obs_spec.shape}")
+    print(f"[DEBUG] action_spec_unbatched.shape = {action_spec_unbatched.shape}")
+    
+    # 计算观测维度（跳过 batch 维度，即第一个维度）
+    policy_obs_dim = flatten_size(policy_obs_spec.shape[1:])
+    critic_obs_dim = flatten_size(critic_obs_spec.shape[1:])
+    
+    print(f"[DEBUG] policy_obs_dim = {policy_obs_dim}")
+    print(f"[DEBUG] critic_obs_dim = {critic_obs_dim}")
 
     # 构建策略网络（Actor）和价值网络（Critic）
     policy_cfg = agent_cfg.get("policy_model", {})
     value_cfg = agent_cfg.get("value_model", {})
-    policy_module = build_actor(policy_obs_key, action_key, action_spec, policy_obs_dim, policy_cfg, device)
+    policy_module = build_actor(policy_obs_key, action_key, action_spec_unbatched, policy_obs_dim, policy_cfg, device)
     value_module = build_critic(critic_obs_key, critic_obs_dim, value_cfg, device)
 
     # 获取 PPO 算法的超参数
@@ -295,6 +311,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # 准备优化器（通常是 Adam）
     optimizer = prepare_optimizer(loss_module.parameters(), agent_cfg.get("optimizer", {}))
 
+    # [DEBUG] 在创建 collector 前测试 policy 是否正常工作
+    print("\n[DEBUG] Testing policy with a reset tensordict...")
+    test_td = torchrl_env.reset()
+    print(f"[DEBUG] Reset tensordict keys: {test_td.keys()}")
+    print(f"[DEBUG] Policy observation shape: {test_td[policy_obs_key].shape}")
+    try:
+        test_td_out = policy_module(test_td)
+        print(f"[DEBUG] Policy output keys: {test_td_out.keys()}")
+        print(f"[DEBUG] Action shape: {test_td_out[action_key].shape}")
+        print(f"[DEBUG] Action device: {test_td_out[action_key].device}")
+        print(f"[DEBUG] Action dtype: {test_td_out[action_key].dtype}")
+        print(f"[DEBUG] Action range: [{test_td_out[action_key].min().item():.4f}, {test_td_out[action_key].max().item():.4f}]")
+    except Exception as e:
+        print(f"[DEBUG] Policy forward pass failed: {e}")
+        raise
+    print("[DEBUG] Policy test passed!\n")
+
     # 配置数据收集器
     collector_cfg = agent_cfg.get("collector", {})
     frames_per_batch = collector_cfg.get("frames_per_batch", 16384)  # 每批收集的帧数
@@ -303,7 +336,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     init_random_frames = collector_cfg.get("init_random_frames", 0)  # 初始随机探索帧数
     max_frames_per_traj = collector_cfg.get("max_frames_per_traj")
     if max_frames_per_traj in (None, 0):
-        max_frames_per_traj = torchrl_env.max_steps or None
+        max_frames_per_traj = max_episode_length or None
 
     # 创建同步数据收集器
     collector = SyncDataCollector(
@@ -360,7 +393,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                         length = min(minibatch_size, num_samples - start)
                         if length <= 0:
                             continue
-                        batch = cast(TensorDictBase, rollout.narrow(0, start, length))
+                        # 使用切片语法而不是 .narrow()
+                        batch = cast(TensorDictBase, rollout[start : start + length])
                         if batch.batch_size[0] == 0:
                             continue
                         # 梯度清零
@@ -384,11 +418,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 global_frames += frames_in_batch
                 update_idx += 1
 
-                # 计算平均奖励
-                reward_tensor = data["reward"]
-                if reward_tensor.ndim > 2:
-                    reward_tensor = reward_tensor.squeeze(-1)
-                mean_reward = reward_tensor.sum(dim=0).mean().item()
+                # 计算平均奖励，兼容不同的奖励键布局
+                reward_key = ("next", loss_module.tensor_keys.reward)
+                reward_tensor = data.get(reward_key, default=None)
+                if reward_tensor is None:
+                    reward_tensor = data.get(loss_module.tensor_keys.reward, default=None)
+
+                if reward_tensor is not None:
+                    if reward_tensor.ndim > 2:
+                        reward_tensor = reward_tensor.squeeze(-1)
+                    mean_reward = reward_tensor.mean().item()
+                else:
+                    mean_reward = float("nan")
                 # 定期打印训练进度
                 if update_idx % args_cli.log_interval == 0:
                     print(

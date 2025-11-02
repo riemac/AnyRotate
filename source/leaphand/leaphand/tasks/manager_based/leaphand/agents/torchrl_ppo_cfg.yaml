@@ -1,7 +1,9 @@
 # 默认 TorchRL PPO 训练配置
 seed: 42
 device: "cuda:0"
-obs_key: "observation"
+# 非对称观测配置（Actor使用policy观测，Critic使用critic观测）
+policy_obs_key: "policy"
+critic_obs_key: "critic"
 action_key: "action"
 
 collector:

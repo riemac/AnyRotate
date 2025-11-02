@@ -160,7 +160,7 @@ class CommandsCfg:
         asset_name="object",
         resampling_time_range=(1e6, 1e6),  # 不基于时间重采样
         init_pos_offset=(0.0, 0.0, 0.0),
-        rotation_axis="x",  # 固定x轴旋转
+        rotation_axis="y",  # 固定y轴旋转
         delta_angle=math.pi / 8.0,  # 每次旋转22.5度
         make_quat_unique=True,
         update_goal_on_success=True,

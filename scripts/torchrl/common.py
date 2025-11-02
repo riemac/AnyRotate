@@ -76,8 +76,27 @@ def get_activation(name: str) -> type[nn.Module]:
 
 
 def select_spec(composite, key: tuple[str, ...]):
+    """从复合 spec 中选择子 spec。
+    
+    Args:
+        composite: 复合 spec 对象（可能是嵌套字典或单一 spec）
+        key: 访问路径的元组，如 ("observation", "policy") 或 ("action",)
+        
+    Returns:
+        选中的 spec 对象
+        
+    Raises:
+        KeyError: 如果路径无效
+    """
     spec = composite
     for part in key:
+        # 检查 spec 是否有 keys() 方法（即是否为复合类型）
+        if not hasattr(spec, 'keys'):
+            # 如果不是复合类型，但还有路径要走，说明路径错误
+            raise KeyError(
+                f"Cannot navigate into non-composite spec at key '{part}'. "
+                f"Full key path: '{'.'.join(key)}'"
+            )
         if part not in spec.keys():  # type: ignore[attr-defined]
             available = ", ".join(str(k) for k in spec.keys())  # type: ignore[attr-defined]
             raise KeyError(f"Unable to resolve key '{'.'.join(key)}'. Available keys: {available}")
@@ -111,16 +130,33 @@ def flatten_size(shape: torch.Size | tuple[int, ...]) -> int:
 def build_actor(
     obs_key: tuple[str, ...],
     action_key: tuple[str, ...],
-    action_spec,
+    action_spec_unbatched,
     obs_dim: int,
     cfg: dict,
     device: torch.device,
 ) -> ProbabilisticActor:
+    """构建 Actor 网络（策略网络）
+    
+    Args:
+        obs_key: 观测键
+        action_key: 动作键
+        action_spec_unbatched: **unbatched** 动作空间规格（不含 batch 维度）
+        obs_dim: 观测维度
+        cfg: Actor 配置字典
+        device: 计算设备
+        
+    Returns:
+        ProbabilisticActor 实例
+        
+    Note:
+        根据 TorchRL 官方实现,ProbabilisticActor 的 spec 和 distribution_kwargs 中的 low/high
+        都应该使用 unbatched 版本,即不包含 num_envs 维度
+    """
     hidden_sizes = cfg.get("hidden_sizes", [256, 256])
     activation = get_activation(cfg.get("activation", "relu"))
     scale_mapping = cfg.get("scale_mapping", "biased_softplus_1.0")
     scale_lb = cfg.get("scale_lb", 1e-4)
-    action_dim = flatten_size(action_spec.shape)
+    action_dim = flatten_size(action_spec_unbatched.shape)
     in_features = cfg.get("in_features", obs_dim)
 
     actor_backbone = nn.Sequential(
@@ -139,19 +175,30 @@ def build_actor(
         out_keys=["loc", "scale"],
     )
 
-    low = action_spec.space.low if hasattr(action_spec, "space") else action_spec.minimum
-    high = action_spec.space.high if hasattr(action_spec, "space") else action_spec.maximum
+    # 从 unbatched spec 中获取动作边界（已经是正确的形状，无 batch 维度）
+    low = action_spec_unbatched.space.low if hasattr(action_spec_unbatched, "space") else action_spec_unbatched.minimum
+    high = action_spec_unbatched.space.high if hasattr(action_spec_unbatched, "space") else action_spec_unbatched.maximum
     low = torch.as_tensor(low, device=device)
     high = torch.as_tensor(high, device=device)
+
+    # TorchRL 的 TanhNormal 需要有限的上下界；对于无界动作空间，回退到 [-1, 1]
+    if not torch.isfinite(low).all():
+        low = torch.where(torch.isfinite(low), low, torch.full_like(low, -1.0))
+    if not torch.isfinite(high).all():
+        high = torch.where(torch.isfinite(high), high, torch.full_like(high, 1.0))
+
+    # 防止 high 与 low 不满足严格大于关系
+    min_gap = torch.full_like(high, 1e-6)
+    high = torch.maximum(high, low + min_gap)
 
     policy = ProbabilisticActor(
         module=actor_module,
         in_keys=["loc", "scale"],
         out_keys=[action_key],
-        spec=action_spec,
+        spec=action_spec_unbatched,  # 使用 unbatched spec
         default_interaction_type=ExplorationType.RANDOM,
         distribution_class=TanhNormal,
-        distribution_kwargs={"min": low, "max": high},
+        distribution_kwargs={"low": low, "high": high},
         return_log_prob=True,
     )
     policy.to(device)
@@ -173,8 +220,11 @@ def build_critic(obs_key: tuple[str, ...], obs_dim: int, cfg: dict, device: torc
         ),
     )
 
+    # ValueOperator 直接接受 nn.Module 和 in_keys/out_keys
+    # 不需要先包装成 TensorDictModule
     critic = ValueOperator(
-        TensorDictModule(critic_backbone, in_keys=[obs_key], out_keys=["state_value"]),
+        module=critic_backbone,
+        in_keys=[obs_key],  # 使用传入的观测键
         out_keys=["state_value"],
     )
     critic.to(device)

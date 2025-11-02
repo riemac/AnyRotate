@@ -22,7 +22,7 @@
    * **信息源:** 不分先后，具情况选用
 
      1. 本地代码（IsaacLab,torchrl 源码、项目文档、示例，使用`codebase`检索工具）。
-     2. 官方文档（`context7`, `githubRepo`工具，当查询isaacsim, physx, rl_games等第三方库）。
+     2. 官方文档（`context7`工具，当查询isaacsim, physx, rl_games等不在工作区的第三方库）。
      3. 网络搜索（`github`, `fetch`工具）。
 
 ## 工作区结构
@@ -150,7 +150,7 @@ rl/               # torchrl官方库（位于~/isaac/rl)
 
 ## 代码实践
 
-* **代码隔离:** 绝不修改 IsaacLab 核心代码，开发在独立项目中进行。
+* **代码隔离:** 尽量不修改 IsaacLab 核心代码，开发在独立项目中进行。进行torchrl第三方集成工作等除外。
 * **风格一致:** 代码与项目风格与 IsaacLab 保持一致。
 * **善用框架:** 优先利用 IsaacLab 现有功能（包括类、方法、属性等信息），避免重复造轮子。
 

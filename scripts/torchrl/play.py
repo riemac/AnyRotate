@@ -167,9 +167,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     policy_obs_spec = select_spec(torchrl_env.observation_spec, policy_obs_key)
     critic_obs_spec = select_spec(torchrl_env.observation_spec, critic_obs_key) if has_asymmetric_obs else policy_obs_spec
-    action_spec = select_spec(torchrl_env.action_spec, action_key)
-    policy_obs_dim = flatten_size(policy_obs_spec.shape)
-    critic_obs_dim = flatten_size(critic_obs_spec.shape)
+    
+    # 对于 action_spec，如果不是复合类型（即没有嵌套结构），直接使用
+    if hasattr(torchrl_env.action_spec, 'keys') and len(action_key) > 0 and action_key[0] in torchrl_env.action_spec.keys():
+        action_spec = select_spec(torchrl_env.action_spec, action_key)
+    else:
+        action_spec = torchrl_env.action_spec
+    
+    # 计算观测维度（跳过 batch 维度，即第一个维度）
+    policy_obs_dim = flatten_size(policy_obs_spec.shape[1:])
+    critic_obs_dim = flatten_size(critic_obs_spec.shape[1:])
 
     policy_cfg = agent_cfg.get("policy_model", {})
     value_cfg = agent_cfg.get("value_model", {})
