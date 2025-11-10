@@ -60,7 +60,7 @@ rl/               # torchrl官方库（位于~/isaac/rl)
 
 ### 研究进展
 
-目前正在做Leaphand手内旋转方面的研究，主要环境架构为ManagerBasedRLEnv。同时正集成第三方学习库TorchRL，处于不断debug、优化的阶段。
+目前正在做Leaphand手内旋转方面的研究，主要环境架构为ManagerBasedRLEnv，主要使用的算法库为rl_games
 
 ## 工作流程
 
@@ -150,7 +150,7 @@ rl/               # torchrl官方库（位于~/isaac/rl)
 
 ## 代码实践
 
-* **代码隔离:** 尽量不修改 IsaacLab 核心代码，开发在独立项目中进行。
+* **代码隔离:** 无明确指示，不修改 IsaacLab 核心代码，开发主要在独立项目中进行。
 * **风格一致:** 代码与项目风格与 IsaacLab 保持一致。
 * **善用框架:** 优先利用 IsaacLab 现有功能（包括类、方法、属性等信息），避免重复造轮子。
 
