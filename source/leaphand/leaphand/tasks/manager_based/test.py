@@ -9,10 +9,7 @@ This script demonstrates how to use the differential inverse kinematics controll
 The differential IK controller can be configured in different modes. It uses the Jacobians computed by
 PhysX. This helps perform parallelized computation of the inverse kinematics.
 
-.. code-block:: bash
-
-    # Usage
-    ./isaaclab.sh -p scripts/tutorials/05_controllers/run_diff_ik.py
+此版本为针对LeapHand机械手的修改版，原版本见scripts/tutorials/05_controllers/run_diff_ik.py
 
 """
 
@@ -24,7 +21,6 @@ from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Tutorial on using the differential IK controller.")
-parser.add_argument("--robot", type=str, default="franka_panda", help="Name of the robot.")
 parser.add_argument("--num_envs", type=int, default=100, help="Number of environments to spawn.")
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -53,12 +49,11 @@ from isaaclab.utils.math import subtract_frame_transforms
 ##
 # Pre-defined configs
 ##
-from isaaclab_assets import FRANKA_PANDA_HIGH_PD_CFG, UR10_CFG  # isort:skip
-
+from leaphand.robots.leap import LEAP_HAND_CFG  # isort:skip
 
 @configclass
-class TableTopSceneCfg(InteractiveSceneCfg):
-    """Configuration for a cart-pole scene."""
+class LeapHandSceneCfg(InteractiveSceneCfg):
+    """Configuration for a LeapHand scene."""
 
     # ground plane
     ground = AssetBaseCfg(
@@ -73,20 +68,15 @@ class TableTopSceneCfg(InteractiveSceneCfg):
     )
 
     # mount
-    table = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/Table",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/Stand/stand_instanceable.usd", scale=(2.0, 2.0, 2.0)
-        ),
-    )
+    # table = AssetBaseCfg(
+    #     prim_path="{ENV_REGEX_NS}/Table",
+    #     spawn=sim_utils.UsdFileCfg(
+    #         usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/Stand/stand_instanceable.usd", scale=(2.0, 2.0, 2.0)
+    #     ),
+    # )
 
     # articulation
-    if args_cli.robot == "franka_panda":
-        robot = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    elif args_cli.robot == "ur10":
-        robot = UR10_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    else:
-        raise ValueError(f"Robot {args_cli.robot} is not supported. Valid: franka_panda, ur10")
+    robot = LEAP_HAND_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
@@ -101,7 +91,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
     # Markers
     frame_marker_cfg = FRAME_MARKER_CFG.copy()
-    frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    frame_marker_cfg.markers["frame"].scale = (0.02, 0.02, 0.02)
     ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
     goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
 
@@ -195,7 +185,7 @@ def main():
     # Set main camera
     sim.set_camera_view([2.5, 2.5, 2.5], [0.0, 0.0, 0.0])
     # Design scene
-    scene_cfg = TableTopSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
+    scene_cfg = LeapHandSceneCfg(num_envs=args_cli.num_envs, env_spacing=2.0)
     scene = InteractiveScene(scene_cfg)
     # Play the simulator
     sim.reset()

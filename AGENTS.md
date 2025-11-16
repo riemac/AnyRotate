@@ -28,7 +28,7 @@
 ## 工作区结构
 
 ```bash
-leaphand/                    # 个人Leaphand项目根目录
+AnyRotate/                    # 个人AnyRotate项目根目录
 ├── scripts/                 # 脚本目录
 │   ├── debug/              # 调试脚本目录
 │   ├── demo/               # 演示脚本目录
@@ -53,9 +53,6 @@ leaphand/                    # 个人Leaphand项目根目录
 
 IsaacLab/                    # IsaacLab官方核心框架目录（位于~/isaac/IsaacLab）
 
-LEAP_Hand_Isaac_Lab/         # LeapHand官方手内重定向项目（供参考）（位于~/isaac/LEAP_Hand_Isaac_Lab）
-
-rl/               # torchrl官方库（位于~/isaac/rl)
 ```
 
 ### 研究进展
@@ -94,7 +91,7 @@ rl/               # torchrl官方库（位于~/isaac/rl)
   执行终端指令前，必须在 `~/isaac` 目录下激活 uv 环境：
 
   ```bash
-  source .venv/bin/activate
+  source env_isaac/bin/activate
   ```
 
 * **反馈增强:**
