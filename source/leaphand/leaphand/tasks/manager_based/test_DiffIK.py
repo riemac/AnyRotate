@@ -78,6 +78,115 @@ class LeapHandSceneCfg(InteractiveSceneCfg):
     # articulation
     robot = LEAP_HAND_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
+def _convert_Xform_to_body_frame(robot, set_goal, body_name, set_Xform_prim_path):
+    """Convert the given set of goals in the set_Xform_prim_path frame to the specified body frame.
+
+    该方法计算Xform标记点相对于目标刚体的固定偏移(只计算一次)，然后将所有目标位姿
+    从Xform坐标系转换到刚体坐标系。
+
+    Args:
+        robot: The robot instance.
+        set_goal: List of goals in the set_Xform_prim_path frame. 每个目标为[x,y,z,qw,qx,qy,qz]格式。
+        body_name: The name of the body to convert to (e.g., "fingertip").
+        set_Xform_prim_path: The prim path of the frame in which the goals are defined 
+                             (e.g., "/World/envs/env_0/Robot/fingertip/index_tip_head").
+    Returns:
+        List of goals in the specified body frame (same format as input).
+        
+    Note
+    ----
+    坐标转换公式
+      已知: 
+        - goal_marker_in_env: Marker在环境坐标系下的目标位姿 (用户提供)
+        - T_marker_in_body: Marker相对于Body的固定偏移 (通过resolve_prim_pose计算)
+      求: goal_body_in_env (Body在环境坐标系下的目标位姿)
+      
+      转换关系(齐次变换):
+        T_marker_in_env = T_body_in_env × T_marker_in_body
+        
+      反向求解:
+        T_body_in_env = T_marker_in_env × T_marker_in_body^{-1}
+        
+      使用 IsaacLab 工具:
+        1. 计算逆偏移: offset_inv = (quat_inv(offset_quat), -R_inv * offset_pos)
+        2. 应用变换: combine_frame_transforms(marker_in_env, offset_inv)
+        
+      或者使用 subtract_frame_transforms 的技巧:
+        subtract(t01, q01, t02, q02) = (t12, q12)
+        其中 T12 = T01^{-1} × T02
+        
+        我们需要: T_body = T_marker × T_offset^{-1}
+        设: T_offset_inv × T_body = T_marker
+        即: T_body_in_offset_inv = T_marker_in_env
+        则: subtract(offset_inv, marker) = body_in_env? 不对...
+        
+      正确方法:
+        直接用 combine + 逆变换
+    """
+    from isaaclab.sim.utils import get_current_stage, resolve_prim_pose
+    from isaaclab.utils.math import combine_frame_transforms, quat_inv, quat_apply
+    import torch
+    
+    # 1. 计算Xform相对于Body刚体的固定偏移(只需计算一次)
+    stage = get_current_stage()
+    
+    # 构建完整路径
+    # 从 set_Xform_prim_path 中提取父路径作为body路径
+    # 例如: "/World/envs/env_0/Robot/fingertip/index_tip_head" -> "/World/envs/env_0/Robot/fingertip"
+    body_prim_path = "/".join(set_Xform_prim_path.split("/")[:-1])
+    xform_prim_path = set_Xform_prim_path
+    
+    # 获取USD Prim
+    body_prim = stage.GetPrimAtPath(body_prim_path)
+    xform_prim = stage.GetPrimAtPath(xform_prim_path)
+    
+    if not body_prim.IsValid():
+        raise ValueError(f"无效的Body Prim路径: {body_prim_path}")
+    if not xform_prim.IsValid():
+        raise ValueError(f"无效的Xform Prim路径: {xform_prim_path}")
+    
+    # 计算Marker相对于Body的偏移 (静态计算，不受仿真影响)
+    offset_pos_tuple, offset_quat_tuple = resolve_prim_pose(xform_prim, ref_prim=body_prim)
+    
+    # 转换为torch tensor
+    offset_pos = torch.tensor(offset_pos_tuple, device=robot.device, dtype=torch.float32)
+    offset_quat = torch.tensor(offset_quat_tuple, device=robot.device, dtype=torch.float32)
+    
+    print(f"[INFO] Marker到Body的固定偏移:")
+    print(f"       body_name: {body_name}")
+    print(f"       marker_path: {xform_prim_path}")
+    print(f"       offset_pos: {offset_pos.cpu().numpy()}")
+    print(f"       offset_quat (wxyz): {offset_quat.cpu().numpy()}")
+    
+    # 2. 计算偏移的逆变换
+    # T^{-1} = [R^T, -R^T * t; 0, 1]
+    # 对于四元数表示: (t, q)^{-1} = (-R^T * t, q^*)
+    offset_quat_inv = quat_inv(offset_quat)
+    offset_pos_inv = quat_apply(offset_quat_inv.unsqueeze(0), -offset_pos.unsqueeze(0))[0]
+    
+    print(f"       offset_pos_inv: {offset_pos_inv.cpu().numpy()}")
+    print(f"       offset_quat_inv (wxyz): {offset_quat_inv.cpu().numpy()}")
+    
+    # 3. 将所有目标位姿从Marker环境坐标转换到Body环境坐标
+    # T_body_in_env = T_marker_in_env × T_marker_in_body^{-1}
+    converted_goals = []
+    
+    for goal in set_goal:
+        # 解析Marker在环境中的目标位姿 [x,y,z,qw,qx,qy,qz]
+        goal_marker_pos = torch.tensor(goal[:3], device=robot.device, dtype=torch.float32)
+        goal_marker_quat = torch.tensor(goal[3:], device=robot.device, dtype=torch.float32)
+        
+        # 应用逆偏移变换: body = marker × offset^{-1}
+        goal_body_pos, goal_body_quat = combine_frame_transforms(
+            goal_marker_pos.unsqueeze(0), goal_marker_quat.unsqueeze(0),  # Marker在env中
+            offset_pos_inv.unsqueeze(0), offset_quat_inv.unsqueeze(0)     # 偏移的逆
+        )
+        
+        # 转换为列表格式 [x,y,z,qw,qx,qy,qz]
+        goal_body = goal_body_pos[0].tolist() + goal_body_quat[0].tolist()
+        converted_goals.append(goal_body)
+    
+    return converted_goals
 
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     """Runs the simulation loop."""
@@ -95,8 +204,22 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
     goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
 
-    # Define goals for Leaphand fingertip
-    ee_goals = []
+    # Define goals for Leaphand fingerti/index_tip_head, 这个是在环境自身坐标系下的目标位置
+    # ee_goals_set = [
+    #     [-0.0364, -0.1175, 0.6144, 0.393, -0.716, 0.240, -0.525],  # 对应 a_0~a_3：0.35, 0.42, 0.92, 0.86
+    #     [-0.0514, -0.1475, 0.6133, 0.389, -0.544, 0.4226, -0.610],  # -0.11, 0.44, 0.36, 1.11
+    #     [-0.0385, -0.0653, 0.5743, -0.298, -0.543, 0.006, -0.785],  # -0.56, 0.89, 1.16, 1.53
+    # ]
+    ee_goals = [
+        [-0.0472, -0.1499, 0.5773, 0.394, -0.715, 0.241, -0.524],  #  对应 a_0~a_3：0.35, 0.42, 0.92, 0.86
+        [-0.066, -0.1623, 0.5670, 0.388, -0.542, 0.427, -0.611],  #  -0.11, 0.44, 0.36, 1.11
+        [-0.0741, -0.0998, 0.5832, -0.3, -0.542, 0.006, -0.785]  # -0.56, 0.89, 1.16, 1.53
+    ]
+
+    # # 从设置的指尖坐标转换为fingertip刚体相对于环境根坐标系下的坐标
+    # ee_goals = _convert_Xform_to_body_frame(robot, set_goal=ee_goals_set, body_name="fingertip", 
+    #                                         set_Xform_prim_path="/World/envs/env_0/Robot/fingertip/index_tip_head")
+
     ee_goals = torch.tensor(ee_goals, device=sim.device)
     # Track the given command
     current_goal_idx = 0
@@ -122,7 +245,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     # Simulation loop
     while simulation_app.is_running():
         # reset
-        if count % 150 == 0:
+        if count % 300 == 0:
             # reset time
             count = 0
             # reset joint state

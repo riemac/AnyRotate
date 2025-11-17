@@ -49,4 +49,4 @@ class ContinuousRotationCommandCfg(CommandTermCfg):
         if self.orientation_success_threshold == NONE:
             # 参考 DirectRLEnv 实现，允许约 0.2rad 的姿态误差，同时兼容更大旋转步长
             self.orientation_success_threshold = max(0.2, self.delta_angle / 2.0)
-        print(f"成功阈值: {self.orientation_success_threshold}")
+        # print(f"成功阈值: {self.orientation_success_threshold}")

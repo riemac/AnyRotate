@@ -57,9 +57,7 @@ class InHandSceneCfg(InteractiveSceneCfg):
     # 地面
     ground = AssetBaseCfg(
         prim_path="/World/ground",
-        spawn=sim_utils.GroundPlaneCfg(
-            usd_path="/home/hac/isaac/isaacsim_assets/Assets/Isaac/5.0/Isaac/Environments/Grid/default_environment.usd"
-        ),
+        spawn=sim_utils.GroundPlaneCfg(),
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.1)),
     )
 

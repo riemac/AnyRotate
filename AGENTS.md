@@ -93,6 +93,14 @@ IsaacLab/                    # IsaacLab官方核心框架目录（位于~/isaac/
   ```bash
   source env_isaac/bin/activate
   ```
+* **路径切换:**
+  在什么项目开发或验证，应切换到相应目录下。如在 `AnyRotate` 项目根目录下进行：
+
+  ```bash
+  cd /home/hac/isaac/AnyRotate
+  ```
+* **IsaacSim 模块导入:**
+  某些IsaacSim模块（如 `isaacgym`, `omni.isaac` 等）只能在Applauncher启动IsaacSim环境后导入使用，否则会报找不到错误。
 
 * **反馈增强:**
   `mcp-feedback-enhanced` 遇到超时/失败时，必须再次调用。
@@ -120,6 +128,26 @@ IsaacLab/                    # IsaacLab官方核心框架目录（位于~/isaac/
 * **环境与管理器:**
   ManagerBasedRLEnv 环境架构下，环境类及其各管理器已暴露大量可用属性和信息，开发过程中应优先复用这些现有资源，避免重复实现功能。
   ManagerBasedRLENV 的各模块功能实现应self-contained，专注该模块的功能
+
+* **SceneEntityCfg 关节索引顺序:**
+  使用 `SceneEntityCfg` 指定 `joint_names` 时，需注意 `preserve_order` 的设置，以保证关节索引顺序与指定顺序一致。
+  
+  **示例问题:**
+  ```python
+  # 机器人实际关节顺序: [a_1, a_12, a_5, a_9, a_0, a_13, ...]
+  # 不加 preserve_order 时
+  cfg = SceneEntityCfg("robot", joint_names=["a_0", "a_1", "a_2", "a_3"])
+  # 返回的 joint_ids 会是: [0, 4, 8, 12] (按机器人关节列表顺序)
+  # 导致: a_0 的数据被填充到 a_1 的位置，a_1 到 a_0，产生错位
+  
+  # 正确做法: 加上 preserve_order=True
+  cfg = SceneEntityCfg("robot", joint_names=["a_0", "a_1", "a_2", "a_3"], preserve_order=True)
+  # 返回的 joint_ids 会是: [4, 0, 8, 12] 但保持你指定的顺序映射
+  ```
+  
+  **何时不需要:**
+  - 使用正则表达式匹配关节时（如 `joint_names=[".*"]` 或 `"a_.*"`）
+  - 仅用于参数随机化等不关心索引顺序的场景
 
 ### 个人偏好
 
