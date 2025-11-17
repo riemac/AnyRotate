@@ -33,16 +33,27 @@ from leaphand.robots.leap import LEAP_HAND_CFG
 
 
 class LeapHandPoseMonitor:
-    """LeapHand实时位姿监控面板"""
+    """实时监控LeapHand的Body位姿和自定义标记点位姿的UI面板"""
     
-    def __init__(self, robot):
+    def __init__(self, robot, custom_prims: list[tuple[str, str]] | None = None):
         """初始化监控面板
         
         Args:
             robot: LeapHand机器人实例
+            custom_prims: 需要额外监控的标记点列表，格式为 [(parent_body_name, marker_relative_path), ...]
+                         例如 [("fingertip", "index_tip_head")]
         """
         self.robot = robot
         self.body_names = robot.data.body_names
+        self.custom_prims = custom_prims or []
+        
+        # 获取USD Stage（用于计算初始偏移）
+        from isaaclab.sim.utils import get_current_stage
+        self.stage = get_current_stage()
+        
+        # 为每个自定义Prim计算并存储相对父体的固定偏移（只需计算一次）
+        self.custom_prim_offsets = {}  # {(parent_name, marker_path): (offset_pos, offset_quat)}
+        self._compute_custom_prim_offsets()
         
         # 创建UI窗口
         self._window = ui.Window(
@@ -72,6 +83,50 @@ class LeapHandPoseMonitor:
                     # 为每个body创建显示行
                     for body_name in self.body_names:
                         self._create_body_row(body_name)
+                    
+                    # 如果有自定义Prim，添加分隔符和自定义区域
+                    if self.custom_prims:
+                        ui.Separator(height=2)
+                        ui.Label("Custom Marker Prims", 
+                                height=25, 
+                                style={"font_size": 16, "color": 0xFFFFAA00})
+                        for parent_body, marker_path in self.custom_prims:
+                            self._create_custom_prim_row(parent_body, marker_path)
+    
+    def _compute_custom_prim_offsets(self):
+        """计算所有自定义Prim相对其父刚体的固定偏移（只调用一次）"""
+        from isaaclab.sim.utils import resolve_prim_pose
+        import torch
+        
+        # 获取第一个环境的机器人根路径
+        robot_root_path = self.robot.root_physx_view.prim_paths[0]
+        
+        for parent_body, marker_path in self.custom_prims:
+            # 构建完整路径
+            parent_prim_path = f"{robot_root_path}/{parent_body}"
+            marker_prim_path = f"{parent_prim_path}/{marker_path}"
+            
+            # 获取USD Prim
+            parent_prim = self.stage.GetPrimAtPath(parent_prim_path)
+            marker_prim = self.stage.GetPrimAtPath(marker_prim_path)
+            
+            if parent_prim.IsValid() and marker_prim.IsValid():
+                # 计算标记点相对父体的偏移（静态计算，不受仿真影响）
+                offset_pos_tuple, offset_quat_tuple = resolve_prim_pose(marker_prim, ref_prim=parent_prim)
+                
+                # 转换为torch tensor
+                offset_pos = torch.tensor(offset_pos_tuple, device=self.robot.device, dtype=torch.float32)
+                offset_quat = torch.tensor(offset_quat_tuple, device=self.robot.device, dtype=torch.float32)
+                
+                # 存储偏移
+                key = (parent_body, marker_path)
+                self.custom_prim_offsets[key] = (offset_pos, offset_quat)
+                
+                print(f"[INFO] 计算标记点偏移: {parent_body}/{marker_path}")
+                print(f"       offset_pos: {offset_pos.cpu().numpy()}")
+                print(f"       offset_quat: {offset_quat.cpu().numpy()}")
+            else:
+                print(f"[WARNING] 无效的Prim路径: {parent_body}/{marker_path}")
     
     def _create_body_row(self, body_name: str):
         """为单个body创建位姿显示行
@@ -102,9 +157,42 @@ class LeapHandPoseMonitor:
                     "quat": quat_label
                 }
     
+    def _create_custom_prim_row(self, parent_body: str, marker_path: str):
+        """为自定义Prim创建位姿显示行
+        
+        Args:
+            parent_body: 父刚体名称
+            marker_path: 标记点相对父体的路径
+        """
+        with ui.CollapsableFrame(
+            title=f"[Marker] {parent_body}/{marker_path}",
+            height=0,
+            collapsed=False,  # 默认展开以便观察
+            style={"color": 0xFFFFAA00}  # 使用橙色区分
+        ):
+            with ui.VStack(spacing=5, height=0):
+                # 位置显示
+                with ui.HStack(spacing=10, height=20):
+                    ui.Label("Position (m):", width=120, style={"color": 0xFF88FF88})
+                    pos_label = ui.Label("", style={"color": 0xFFFFFFFF})
+                
+                # 姿态显示 (四元数 wxyz)
+                with ui.HStack(spacing=10, height=20):
+                    ui.Label("Orientation (quat):", width=120, style={"color": 0xFFFF8888})
+                    quat_label = ui.Label("", style={"color": 0xFFFFFFFF})
+                
+                # 存储标签引用
+                key = f"_custom_{parent_body}/{marker_path}"
+                self.pose_labels[key] = {
+                    "pos": pos_label,
+                    "quat": quat_label,
+                    "parent_body": parent_body,
+                    "marker_path": marker_path
+                }
+    
     def update(self):
-        """更新所有body的位姿显示（每帧调用）"""
-        # 获取所有body的世界坐标系位姿
+        """更新所有body和自定义标记点的位姿显示（每帧调用）"""
+        # 1. 更新机器人刚体的位姿
         body_poses_w = self.robot.data.body_pose_w  # shape: (num_envs, num_bodies, 7)
         
         # 只显示第一个环境的数据
@@ -120,6 +208,46 @@ class LeapHandPoseMonitor:
                 
                 self.pose_labels[body_name]["pos"].text = pos_str
                 self.pose_labels[body_name]["quat"].text = quat_str
+        
+        # 2. 更新自定义Prim的位姿（使用PhysX数据 + 固定偏移）
+        from isaaclab.utils.math import combine_frame_transforms
+        
+        for parent_body, marker_path in self.custom_prims:
+            key = f"_custom_{parent_body}/{marker_path}"
+            offset_key = (parent_body, marker_path)
+            
+            if key in self.pose_labels and offset_key in self.custom_prim_offsets:
+                # 获取父刚体的实时位姿（从Phy sX）
+                try:
+                    parent_idx = self.body_names.index(parent_body)
+                    parent_pos_w = body_poses_w[0, parent_idx, :3]  # (3,)
+                    parent_quat_w = body_poses_w[0, parent_idx, 3:7]  # (4,) wxyz
+                    
+                    # 获取预计算的偏移
+                    offset_pos, offset_quat = self.custom_prim_offsets[offset_key]
+                    
+                    # 计算标记点的世界位姿 = 父体位姿 ⊕ 偏移
+                    marker_pos_w, marker_quat_w = combine_frame_transforms(
+                        parent_pos_w.unsqueeze(0), parent_quat_w.unsqueeze(0),
+                        offset_pos.unsqueeze(0), offset_quat.unsqueeze(0)
+                    )
+                    
+                    # 转换为numpy显示
+                    pos = marker_pos_w[0].cpu().numpy()
+                    quat = marker_quat_w[0].cpu().numpy()
+                    
+                    # 更新UI标签
+                    pos_str = f"x: {pos[0]:7.4f}  y: {pos[1]:7.4f}  z: {pos[2]:7.4f}"
+                    quat_str = f"w: {quat[0]:6.3f}  x: {quat[1]:6.3f}  y: {quat[2]:6.3f}  z: {quat[3]:6.3f}"
+                    
+                    self.pose_labels[key]["pos"].text = pos_str
+                    self.pose_labels[key]["quat"].text = quat_str
+                    
+                except ValueError:
+                    # 父体名称不存在
+                    if not self.pose_labels[key]["pos"].text.startswith("["):
+                        self.pose_labels[key]["pos"].text = f"[INVALID PARENT: {parent_body}]"
+                        self.pose_labels[key]["quat"].text = ""
 
 
 class LeapHandControlPanel:
@@ -190,10 +318,10 @@ class LeapHandControlPanel:
         """创建按手指分组的关节控制"""
         # 定义手指分组 (基于LeapHand的关节命名规则)
         finger_groups = {
-            "Thumb": ["a_0", "a_1", "a_2", "a_3"],
-            "Index": ["a_4", "a_5", "a_6", "a_7"],
-            "Middle": ["a_8", "a_9", "a_10", "a_11"],
-            "Ring": ["a_12", "a_13", "a_14", "a_15"],
+            "Index": ["a_0", "a_1", "a_2", "a_3"],
+            "Middle": ["a_4", "a_5", "a_6", "a_7"],
+            "Ring": ["a_8", "a_9", "a_10", "a_11"],
+            "Thumb": ["a_12", "a_13", "a_14", "a_15"],
         }
         
         for group_name, joint_names in finger_groups.items():
@@ -309,7 +437,16 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene):
     robot = scene["robot"]
     
     # 创建UI面板
-    pose_monitor = LeapHandPoseMonitor(robot)     # 位姿监控面板
+    # 定义需要监控的自定义Prim（标记点）
+    # 格式: (parent_body_name, marker_relative_path)
+    custom_marker_prims = [
+        ("fingertip", "index_tip_head"),        # 食指指尖标记
+        ("thumb_fingertip", "thumb_tip_head"),  # 拇指指尖标记
+        ("fingertip_2", "middle_tip_head"),     # 中指指尖标记
+        ("fingertip_3", "ring_tip_head"),       # 无名指指尖标记
+    ]
+    
+    pose_monitor = LeapHandPoseMonitor(robot, custom_prims=custom_marker_prims)  # 位姿监控面板
     control_panel = LeapHandControlPanel(robot)   # 关节控制面板
     
     # 仿真参数
@@ -334,7 +471,8 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene):
         sim.step()
         
         # 更新场景
-        scene.update(sim_dt)
+        # 从仿真中读取最新状态并更新所有场景实体的内部缓冲区。如果不调用 update()，时间戳不更新，访问属性时会读取缓存的旧数据
+        scene.update(sim_dt)  # 这个不更新机器人数据的话，UI面板会没有变动
         
         # 更新位姿监控面板 (每10帧更新一次UI以提升性能)
         if count % 10 == 0:
