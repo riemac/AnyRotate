@@ -25,6 +25,8 @@
      2. 官方文档（`context7`工具，当查询isaacsim, physx, rl_games等不在工作区的第三方库）。
      3. 网络搜索（`github`, `fetch`工具）。
 
+注意，用中文回答
+
 ## 工作区结构
 
 ```bash

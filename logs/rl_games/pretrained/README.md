@@ -1,0 +1,2 @@
+# RL-Games Pretrained Models
+This directory contains pretrained models for RL-Games agents used in the AnyRotate project. These models can be used to initialize agents for training or evaluation, providing a starting point that can speed up learning and improve performance.

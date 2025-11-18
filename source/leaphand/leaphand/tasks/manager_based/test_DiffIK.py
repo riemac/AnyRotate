@@ -195,7 +195,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     robot = scene["robot"]
 
     # Create controller
-    diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
+    diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="pinv")
     diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=scene.num_envs, device=sim.device)
 
     # Markers
@@ -228,7 +228,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     ik_commands[:] = ee_goals[current_goal_idx]
 
     # Specify robot-specific parameters
-    robot_entity_cfg = SceneEntityCfg("robot", joint_names=[".*"], body_names=["fingertip"])
+    robot_entity_cfg = SceneEntityCfg("robot", joint_names=["a_0", "a_1", "a_2", "a_3"], 
+                                      body_names=["fingertip"], preserve_order=True)
     # Resolving the scene entities
     robot_entity_cfg.resolve(scene)
     # Obtain the frame index of the end-effector
@@ -245,7 +246,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     # Simulation loop
     while simulation_app.is_running():
         # reset
-        if count % 300 == 0:
+        if count % 150 == 0:
             # reset time
             count = 0
             # reset joint state
