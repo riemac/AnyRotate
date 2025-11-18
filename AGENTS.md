@@ -21,9 +21,11 @@
 
    * **信息源:** 不分先后，具情况选用
 
-     1. 本地代码（IsaacLab 源码、项目文档、示例，使用`codebase`检索工具）。
-     2. 官方文档（`context7`工具，当查询isaacsim, physx, rl_games等不在工作区的第三方库）。
+     1. 本地代码（IsaacLab 源码、项目文档、示例，使用 `semantic_search` 或类似工具对整个代码库进行检索）。
+     2. 官方文档（`context7`工具或 `githubRepo`，当查询isaacsim, physx, rl_games等不在工作区的第三方库）。
      3. 网络搜索（`github`, `fetch`工具）。
+   * **精准定位:** 
+     回复问题时，若引用了代码、文档片段等信息，提供精准定位，可让我快速跳转。
 
 注意，用中文回答
 
@@ -78,12 +80,16 @@ IsaacLab/                    # IsaacLab官方核心框架目录（位于~/isaac/
 * 注意脚本复用，一般`random_agent.py`可测试大部分内容，若不满足的情况才需要开发新的脚本。
 * 如若开发脚本，应按照性质放在`scripts/`目录下对应的子目录中，`debug/`用于调试功能，`demo/`用于演示功能（含可视化），`evaluate/`用于评估功能。
 * 遵循 standalone 开发模式，使用 **appLauncher** 作为核心启动器。
-* 注意：部分依赖库需在 **IsaacSim 环境启动后** 才能正常导入。
+* 注意：部分依赖库如omni,card需在 **IsaacSim 环境启动后** 才能正常导入。
 
 ### 文档管理
 
 * 非必要情况不需新增文档。
 * 所有项目文档统一存放在 `source/leaphand/docs/` 目录。
+  
+### 代码风格
+
+* 完成文件开发后，调用 `pylance mcp server` 相关工具进行代码语法检查。
 
 ## 注意事项
 
@@ -104,11 +110,9 @@ IsaacLab/                    # IsaacLab官方核心框架目录（位于~/isaac/
 * **IsaacSim 模块导入:**
   某些IsaacSim模块（如 `isaacgym`, `omni.isaac` 等）只能在Applauncher启动IsaacSim环境后导入使用，否则会报找不到错误。
 
-* **反馈增强:**
-  `mcp-feedback-enhanced` 遇到超时/失败时，必须再次调用。
-
-* **注释Prompt:**
-  文件中如有以 `Prompt:` 标注的注释，需将其内容视为提示词要求的一部分严格遵循。
+* **指令遵循:**
+  - `mcp-feedback-enhanced` 调用失败时必须重试。
+  - 文件中以 `Prompt:` 标注的注释是必须遵循的指令，且不可删除。
 
 ### 工程问题
 
@@ -157,27 +161,75 @@ IsaacLab/                    # IsaacLab官方核心框架目录（位于~/isaac/
   解释算法等机理性内容，结合数学公式。简洁美观的经渲染数学公式比大段文字和代码描述更易懂。
 
 * **注释风格:**
-  使用和IsaacLab官方一致的注释风格（Google Docstring Style）。实现复杂方法时，在``` ```字符串中增加使用 `Note` 部分来描述算法，通过数学公式（不要用latex，渲染不了）把主要逻辑从复杂的工程实现中精简抽象出来。如下所示：
-    ```python
-    """计算旋转速度奖励 - 目标是达到指定的角速度而非越快越好
-    ...
-    Note
-    ----
-    旋转速度奖励公式
-      旋转轴是绕的世界坐标系中的固定轴旋转，而不是绕物体自身的局部坐标系轴旋转
-      物体旋转时的旋转轴和Body Frame的表示无关
-      奖励公式：
-        - 正向速度: R = exp(-positive_decay * |projected_velocity - target_angular_speed|)
-        - 负向速度: R = negative_penalty_weight * projected_velocity (负惩罚)
-    """
-    ```
+  使用与 IsaacLab 官方一致的 Google Docstring Style。对于实现复杂算法的方法，在 docstring 中增加 Notes 部分，采用增强型 ASCII 风格 + 伪代码来描述算法核心思想和数学模型。
+
+  核心要求:
+  - **分层结构:** 将 Notes 细分为"算法核心思想"、"关键假设"和"数学模型"三个层次
+  - **ASCII 数学符号:** 使用纯文本符号表达数学公式（如 x^2、sum_i、exp()），避免 LaTeX（无法在代码中渲染）
+  - **伪代码辅助:** 对复杂计算流程，用伪代码分步描述，让数学模型与代码实现对应清晰
+  - **物理意义:** 为关键变量标注物理/几何含义，增强可理解性
+
+  示例:
+  ```python
+  def complex_algorithm(input_data, param1, param2):
+      """简洁的一句话功能描述。
+      
+      更详细的功能说明，解释这个方法在整个系统中的作用。
+      
+      Args:
+          input_data: 输入数据的描述，包括形状和物理意义
+          param1: 参数1的描述
+          param2: 参数2的描述
+      
+      Returns:
+          返回值的描述，包括形状和取值范围
+      
+      Notes
+      -----
+      算法核心思想:
+          用1-2句话说明算法的设计动机和目标。
+          例如：利用指数衰减函数来平滑奖励曲线，避免梯度突变。
+      
+      关键假设:
+          - 列出算法依赖的前提条件
+          - 例如：输入向量已归一化
+          - 例如：使用世界坐标系而非局部坐标系
+      
+      数学模型:
+      
+      1. 第一步计算（用简洁的数学表达式）:
+      
+          intermediate_value = sqrt(x^2 + y^2)
+      
+         其中 x, y 是输入向量的分量。
+      
+      2. 第二步计算（结合条件判断）:
+      
+          if intermediate_value > threshold:
+              result = exp(-decay_rate * (intermediate_value - threshold))
+          else:
+              result = 1.0
+      
+         当 intermediate_value 超过阈值时，奖励呈指数衰减；
+         否则给予满分奖励。
+      
+      3. 最终输出:
+      
+          output = weight * result
+      
+         通过权重参数调节奖励的影响力。
+      
+      """
+      # 实现代码...
+      pass
+  ```
+
 
 * **表格对比:**
-  总结涉及到众多复杂可比项或时，使用表格进行对比。
+  涉及到众多复杂可比项时，使用表格进行总结对比。
 
 ## 代码实践
 
 * **代码隔离:** 无明确指示，不修改 IsaacLab 核心代码，开发主要在独立项目中进行。
 * **风格一致:** 代码与项目风格与 IsaacLab 保持一致。
 * **善用框架:** 优先利用 IsaacLab 现有功能（包括类、方法、属性等信息），避免重复造轮子。
-
