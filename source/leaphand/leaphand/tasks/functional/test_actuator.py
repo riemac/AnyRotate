@@ -2,6 +2,8 @@
 """
 LeapHand单指/多指正弦轨迹追踪诊断脚本
 
+TODO: 理想误差和目标误差画在不同的图上，变为 3*关节数的子图；同时补充相对误差信息，abs(q_actual-q_ideal)/max(abs(q_ideal),1e-4)和abs(q_actual-q_target)/max(abs(q_target),1e-4)
+
 核心机制说明:
 =============
 
